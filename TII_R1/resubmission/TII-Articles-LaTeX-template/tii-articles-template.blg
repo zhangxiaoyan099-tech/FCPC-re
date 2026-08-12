@@ -1,0 +1,60 @@
+This is BibTeX, Version 0.99d
+Capacity: max_strings=200000, hash_size=200000, hash_prime=170003
+The top-level auxiliary file: tii-articles-template.aux
+Reallocating 'name_of_file' (item size: 1) to 9 items.
+The style file: IEEEtran.bst
+Reallocating 'name_of_file' (item size: 1) to 5 items.
+Reallocating 'singl_function' (item size: 4) to 100 items.
+Reallocating 'singl_function' (item size: 4) to 100 items.
+Reallocating 'singl_function' (item size: 4) to 100 items.
+Reallocating 'wiz_functions' (item size: 4) to 6000 items.
+Reallocating 'singl_function' (item size: 4) to 100 items.
+Database file #1: cite.bib
+-- IEEEtran.bst version 1.14 (2015/08/26) by Michael Shell.
+-- http://www.michaelshell.org/tex/ieeetran/bibtex/
+-- See the "IEEEtran_bst_HOWTO.pdf" manual for usage information.
+Warning--empty journal in cifar10
+
+Done.
+You've used 31 entries,
+            4087 wiz_defined-function locations,
+            1005 strings with 14084 characters,
+and the built_in function-call counts, 30121 in all, are:
+= -- 2372
+> -- 883
+< -- 281
++ -- 508
+- -- 179
+* -- 1480
+:= -- 4123
+add.period$ -- 66
+call.type$ -- 31
+change.case$ -- 31
+chr.to.int$ -- 666
+cite$ -- 32
+duplicate$ -- 2069
+empty$ -- 2284
+format.name$ -- 188
+if$ -- 7112
+int.to.chr$ -- 0
+int.to.str$ -- 31
+missing$ -- 365
+newline$ -- 116
+num.names$ -- 31
+pop$ -- 860
+preamble$ -- 1
+purify$ -- 0
+quote$ -- 2
+skip$ -- 2309
+stack$ -- 0
+substring$ -- 1693
+swap$ -- 1824
+text.length$ -- 59
+text.prefix$ -- 0
+top$ -- 5
+type$ -- 31
+warning$ -- 1
+while$ -- 127
+width$ -- 33
+write$ -- 328
+(There was 1 warning)

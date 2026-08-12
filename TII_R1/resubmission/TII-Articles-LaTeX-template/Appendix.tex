@@ -1,0 +1,219 @@
+\documentclass[journal,twoside,web]{ieeecolor}
+\usepackage{generic}
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{bm}
+\usepackage{url}
+
+\newtheorem{proposition}{Proposition}
+\newtheorem{theorem}{Theorem}
+\newcommand{\JSD}{\mathrm{JSD}}
+\newcommand{\JSDN}{\mathrm{JSDN}}
+
+\begin{document}
+\onecolumn
+\appendices
+
+\section{Properties and Optimization Interpretation of FCPC}
+
+This appendix replaces the previous convergence argument with results that
+match the implemented mechanism. Local differential privacy (LDP) is applied
+only to the label histogram and sample-count metadata used for pairing; it is
+not applied to stochastic gradients. We therefore do not introduce an LDP
+gradient-variance term. Moreover, JSDN determines the matching and is not
+assumed to be linearly related to gradient dissimilarity. The relationship
+between JSDN and observed gradient divergence is evaluated empirically in the
+revised experiments.
+
+\subsection{Definition and Basic Properties of JSDN}
+
+Let $\bm{p}_i,\bm{p}_j\in\Delta^{C-1}$ denote the label distributions of two
+clients, and let $N_i,N_j>0$ denote their sample counts. With logarithms in
+base two, define
+\begin{align}
+ \JSD(\bm{p}_i,\bm{p}_j)
+ &=\frac{1}{2}D_{\mathrm{KL}}(\bm{p}_i\Vert\bm{m}_{ij})
+   +\frac{1}{2}D_{\mathrm{KL}}(\bm{p}_j\Vert\bm{m}_{ij}),\\
+ \bm{m}_{ij}&=\frac{\bm{p}_i+\bm{p}_j}{2},\\
+ q_{ij}&=\frac{|N_i-N_j|}{N_i+N_j},\\
+ \JSDN_{ij}&=(1-\lambda)\JSD(\bm{p}_i,\bm{p}_j)+\lambda q_{ij},
+ \qquad \lambda\in[0,1].
+\end{align}
+
+\begin{proposition}[Boundedness and symmetry]
+For all valid client pairs, $\JSDN_{ij}=\JSDN_{ji}$ and
+$0\leq \JSDN_{ij}\leq 1$. Furthermore, $\JSDN_{ij}=0$ if the two clients have
+identical label distributions and equal sample counts.
+\end{proposition}
+
+\begin{proof}
+The Jensen--Shannon divergence with base-two logarithms is symmetric and lies
+in $[0,1]$. The normalized quantity difference $q_{ij}$ is also symmetric and
+lies in $[0,1]$ because $|N_i-N_j|\leq N_i+N_j$. JSDN is a convex combination
+of these two quantities, so it is symmetric and belongs to $[0,1]$. If both
+metadata components are identical, both terms are zero.
+\end{proof}
+
+\begin{proposition}[Single-skew reduction]
+If $N_i=N_j$ for all candidate pairs, ranking pairs by JSDN is identical to
+ranking them by JSD whenever $\lambda<1$. If
+$\bm{p}_i=\bm{p}_j$ for all candidate pairs, ranking pairs by JSDN is
+identical to ranking them by $q_{ij}$ whenever $\lambda>0$.
+\end{proposition}
+
+\begin{proof}
+Under equal sample counts, $q_{ij}=0$ and
+$\JSDN_{ij}=(1-\lambda)\JSD_{ij}$; multiplication by the positive constant
+$1-\lambda$ preserves the ranking. Under equal label distributions,
+$\JSD_{ij}=0$ and $\JSDN_{ij}=\lambda q_{ij}$, for which the same argument
+applies.
+\end{proof}
+
+These propositions justify the use of a fixed $\lambda$ at the two
+single-skew limits, but they do not identify a universally optimal value in
+mixed-skew settings. Consequently, the revised manuscript treats
+$\lambda=0.3$ as an empirically selected default and reports sensitivity over
+heterogeneity levels and client scales instead of claiming a theoretical
+optimum.
+
+\subsection{Optimization of the Paired Local Objective}
+
+During a local update, client $i$ treats the paired client's previous-round
+model $\bm{r}_i^t=\bm{w}_{\pi_t(i)}^{t-1}$ as fixed and minimizes
+\begin{equation}
+ \Phi_i^t(\bm{w})=F_i(\bm{w})+
+ \beta\|\bm{w}-\bm{r}_i^t\|_2^2,\qquad \beta\geq0.
+\end{equation}
+For the first communication round, the implementation defines the unavailable
+previous-round reference as the common initialization $\bm{w}^0$. All partner
+references are snapshotted before any client begins the current round, which
+prevents an order-dependent asymmetric update in sequential simulation.
+
+\begin{proposition}[Local descent and stationarity]
+Assume $F_i$ is differentiable, bounded below, and $L$-smooth. Then
+$\Phi_i^t$ is $(L+2\beta)$-smooth. For the update
+\begin{equation}
+ \bm{w}^{s+1}=\bm{w}^{s}-\eta\nabla\Phi_i^t(\bm{w}^{s})
+\end{equation}
+with $0<\eta\leq1/(L+2\beta)$,
+\begin{equation}
+ \Phi_i^t(\bm{w}^{s+1})
+ \leq \Phi_i^t(\bm{w}^{s})
+ -\frac{\eta}{2}\|\nabla\Phi_i^t(\bm{w}^{s})\|_2^2.
+\end{equation}
+After $S$ local steps,
+\begin{equation}
+ \min_{0\leq s<S}\|\nabla\Phi_i^t(\bm{w}^{s})\|_2^2
+ \leq
+ \frac{2\left[\Phi_i^t(\bm{w}^{0})-\inf_{\bm{w}}\Phi_i^t(\bm{w})\right]}
+ {\eta S}.
+\end{equation}
+\end{proposition}
+
+\begin{proof}
+The gradient of the quadratic term is
+$2\beta(\bm{w}-\bm{r}_i^t)$ and is $2\beta$-Lipschitz. Hence
+$\nabla\Phi_i^t$ is $(L+2\beta)$-Lipschitz. Applying the descent lemma with
+$L_\Phi=L+2\beta$ gives
+\begin{align}
+ \Phi_i^t(\bm{w}^{s+1})
+ &\leq \Phi_i^t(\bm{w}^{s})
+ -\eta\left(1-\frac{L_\Phi\eta}{2}\right)
+ \|\nabla\Phi_i^t(\bm{w}^{s})\|_2^2\\
+ &\leq \Phi_i^t(\bm{w}^{s})
+ -\frac{\eta}{2}\|\nabla\Phi_i^t(\bm{w}^{s})\|_2^2.
+\end{align}
+Summing over $s=0,\ldots,S-1$, using the lower bound of $\Phi_i^t$, and
+upper-bounding the minimum by the average proves the final inequality.
+\end{proof}
+
+This result establishes that the implemented quadratic paired objective has a
+standard nonconvex stationarity guarantee. It deliberately does not claim
+that larger JSDN causes a faster global convergence rate; that causal claim
+would require assumptions connecting metadata distributions to model
+gradients and is instead tested through controlled pairing ablations.
+
+\section{Matching Guarantee and Odd-Client Handling}
+
+For a participating client set $V_t$, construct the complete undirected graph
+$G_t=(V_t,E_t)$ with nonnegative edge weight
+$d_{ij}=\JSDN_{ij}$. FCPC greedily scans edges in nonincreasing weight order
+and accepts an edge if neither endpoint has already been matched.
+
+\begin{theorem}[Greedy matching approximation]
+Let $M_{\mathrm{g}}$ be the greedy dissimilarity matching and
+$M^\star$ a maximum-weight matching. For nonnegative JSDN weights,
+\begin{equation}
+ \sum_{e\in M_{\mathrm{g}}}d_e
+ \geq \frac{1}{2}\sum_{e\in M^\star}d_e.
+\end{equation}
+\end{theorem}
+
+\begin{proof}
+Consider a greedy edge $e=(i,j)$ when it is selected. At most two edges of
+$M^\star$ are incident to $i$ or $j$. Any such optimal edge still available
+at this step has weight no larger than $d_e$, because the greedy scan is in
+nonincreasing order. Charge those at most two optimal edges to $e$. Every
+optimal edge is charged once, and the total charge to each greedy edge is at
+most $2d_e$. Thus $w(M^\star)\leq2w(M_{\mathrm{g}})$.
+\end{proof}
+
+When $|V_t|$ is odd, one client is necessarily unmatched by any ordinary
+matching. The revised FCPC procedure does \emph{not} discard this client: it
+still performs local training and contributes to global aggregation, but does
+not receive the paired regularizer in that round. A fair-bye rule chooses a
+client with the smallest previous unmatched count before greedily matching the
+remaining clients. For an always-participating odd client set, the unmatched
+counts of any two clients therefore differ by at most one. This preserves the
+training participation rate and prevents one representative client from being
+systematically excluded from regularization.
+
+\section{Complexity and Communication Accounting}
+
+For $n=|V_t|$ participating clients, $C$ classes, and a model state containing
+$P_b$ bytes:
+
+\begin{itemize}
+ \item Building the dense JSDN matrix costs $O(n^2C)$ arithmetic and
+ $O(n^2)$ storage. The implementation normalizes each histogram once and
+ evaluates the matrix in bounded-memory vectorized blocks.
+ \item Sorting the $n(n-1)/2$ edges and scanning them for greedy matching costs
+ $O(n^2\log n)$ time and $O(n^2)$ storage. Exact maximum-weight matching is
+ used only as an ablation because its worst-case cost is cubic.
+ \item Computing the FCPC penalty is $O(P)$ arithmetic over trainable
+ parameters, where $P$ is the parameter count, and requires one frozen partner
+ state.
+ \item Relative to FedAvg, FCPC does not add server communication rounds.
+ However, a full-model implementation adds $2|M_t|P_b$ partner-upload bytes
+ per round, in addition to $nP_b$ server downloads and $nP_b$ server uploads.
+ With an even participating set, the model-payload total is therefore
+ $3nP_b$ for FCPC versus $2nP_b$ for FedAvg---a 50\% increase in total model
+ traffic, or one additional model upload per client. This cost is measured and
+ reported rather than described as negligible.
+\end{itemize}
+
+The revised code logs JSDN construction and pairing time, round time, process
+CPU utilization, peak resident memory, GPU utilization, peak allocated GPU
+memory, per-link model bytes, and cumulative traffic. Scalability results for
+10--1000 clients and accuracy--communication trade-offs are reported in the
+revised experimental section.
+
+\section{Threat Model}
+
+The main statistical-heterogeneity analysis assumes honest-but-curious
+clients and an authenticated server. LDP protects the uploaded metadata but
+does not make FCPC Byzantine robust. In particular, a malicious partner could
+supply a poisoned reference model. Recent ScaleSign and MSGuard results show
+that model-poisoning attacks and multi-strategy defenses require update-level
+robustness mechanisms \cite{yang2025scalesign}. Because FCPC does not modify
+server aggregation, it can be combined with robust aggregation or detection,
+but such a composition must filter both server-bound and partner-bound model
+states. The revised manuscript states this limitation explicitly and does not
+claim adversarial robustness from dissimilarity-aware pairing alone.
+
+\bibliographystyle{IEEEtran}
+\bibliography{cite}
+
+\end{document}

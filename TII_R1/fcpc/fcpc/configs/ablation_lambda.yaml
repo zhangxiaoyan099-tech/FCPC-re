@@ -1,0 +1,46 @@
+{
+  "seed": 42,
+  "dataset": {
+    "name": "mnist",
+    "num_classes": 10,
+    "input_channels": 1,
+    "root": "./data",
+    "download": false
+  },
+  "model": {
+    "name": "simple_cnn"
+  },
+  "federated": {
+    "num_clients": 10,
+    "clients_per_round": 10,
+    "rounds": 100,
+    "local_epochs": 10,
+    "batch_size": 64,
+    "aggregation": "weighted"
+  },
+  "partition": {
+    "mode": "dual_skew",
+    "alpha": 0.5,
+    "quantity_skew": true
+  },
+  "algorithm": {
+    "name": "fedavg"
+  },
+  "fcpc": {
+    "enabled": true,
+    "lambda_jsdn": 0.3,
+    "lambda_grid": [0.1, 0.2, 0.3, 0.4],
+    "beta": 0.2,
+    "epsilon": 1.0,
+    "metric": "jsdn"
+  },
+  "optimizer": {
+    "name": "sgd",
+    "lr": 0.01
+  },
+  "logging": {
+    "output_dir": "outputs/logs",
+    "run_name": "ablation_lambda"
+  }
+}
+

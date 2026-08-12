@@ -1,0 +1,47 @@
+{
+  "seed": 42,
+  "dataset": {
+    "name": "emnist_byclass",
+    "num_classes": 62,
+    "input_channels": 1,
+    "root": "./data",
+    "download": false
+  },
+  "model": {
+    "name": "simple_cnn"
+  },
+  "federated": {
+    "num_clients": 10,
+    "clients_per_round": 10,
+    "rounds": 100,
+    "local_epochs": 10,
+    "batch_size": 64,
+    "aggregation": "weighted",
+    "device": "auto"
+  },
+  "partition": {
+    "mode": "dual_skew",
+    "alpha": 0.1,
+    "quantity_skew": true
+  },
+  "algorithm": {
+    "name": "fedavg"
+  },
+  "fcpc": {
+    "enabled": true,
+    "lambda_jsdn": 0.3,
+    "beta": 0.2,
+    "epsilon": 1.0,
+    "metric": "jsdn"
+  },
+  "optimizer": {
+    "name": "sgd",
+    "lr": 0.01
+  },
+  "logging": {
+    "output_dir": "outputs/logs",
+    "checkpoint_dir": "outputs/checkpoints",
+    "run_name": "emnist_byclass_fcpc"
+  }
+}
+

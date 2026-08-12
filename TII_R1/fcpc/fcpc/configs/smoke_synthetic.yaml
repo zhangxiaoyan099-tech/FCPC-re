@@ -1,0 +1,51 @@
+{
+  "seed": 42,
+  "dataset": {
+    "name": "synthetic",
+    "num_classes": 10,
+    "input_channels": 1,
+    "image_size": 28,
+    "train_samples": 128,
+    "test_samples": 32
+  },
+  "model": {
+    "name": "simple_cnn"
+  },
+  "federated": {
+    "num_clients": 4,
+    "clients_per_round": 4,
+    "rounds": 1,
+    "local_epochs": 1,
+    "batch_size": 8,
+    "max_batches_per_client": 1,
+    "max_eval_batches": 1,
+    "aggregation": "weighted",
+    "device": "cpu"
+  },
+  "partition": {
+    "mode": "dual_skew",
+    "alpha": 0.5
+  },
+  "algorithm": {
+    "name": "fedavg"
+  },
+  "fcpc": {
+    "enabled": true,
+    "lambda_jsdn": 0.3,
+    "beta": 0.2,
+    "epsilon": 1.0,
+    "pairing_strategy": "fair_greedy_dissimilar"
+  },
+  "optimizer": {
+    "name": "sgd",
+    "lr": 0.01
+  },
+  "profiling": {
+    "sample_interval_s": 0.02
+  },
+  "logging": {
+    "output_dir": "outputs/smoke",
+    "checkpoint_dir": "outputs/smoke",
+    "run_name": "smoke_synthetic"
+  }
+}

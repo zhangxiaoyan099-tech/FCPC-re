@@ -1,0 +1,47 @@
+{
+  "seed": 42,
+  "dataset": {
+    "name": "uci_har",
+    "num_classes": 6,
+    "input_channels": 9,
+    "root": "./data/uci_har/UCI HAR Dataset",
+    "download": false
+  },
+  "model": {
+    "name": "sensor_cnn"
+  },
+  "federated": {
+    "num_clients": 21,
+    "clients_per_round": 21,
+    "rounds": 100,
+    "local_epochs": 5,
+    "batch_size": 64,
+    "aggregation": "weighted",
+    "device": "auto"
+  },
+  "partition": {
+    "mode": "natural"
+  },
+  "algorithm": {
+    "name": "fedavg"
+  },
+  "fcpc": {
+    "enabled": true,
+    "lambda_jsdn": 0.3,
+    "beta": 0.2,
+    "epsilon": 1.0,
+    "pairing_strategy": "fair_greedy_dissimilar"
+  },
+  "optimizer": {
+    "name": "sgd",
+    "lr": 0.01
+  },
+  "profiling": {
+    "sample_interval_s": 0.1
+  },
+  "logging": {
+    "output_dir": "outputs/logs",
+    "checkpoint_dir": "outputs/checkpoints",
+    "run_name": "uci_har_natural_fcpc"
+  }
+}

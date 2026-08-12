@@ -1,0 +1,139 @@
+\relax 
+\citation{review3}
+\citation{Zhulin}
+\citation{shengao11}
+\citation{shengao12}
+\citation{shengao13}
+\citation{tii-ClientSelectin,iot2}
+\citation{tii-Spatio–TemporalAware}
+\citation{fesvibs}
+\citation{splitfed}
+\citation{tii-Personalized2}
+\providecommand \oddpage@label [2]{}
+\@writefile{toc}{\contentsline {section}{\numberline {I}Introduction}{1}{}\protected@file@percent }
+\newlabel{sec:introduction}{{I}{1}}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces The non-IID IoT system adopts a cloud-edge-end hierarchical device architecture, which comprises heterogeneous end devices.}}{1}{}\protected@file@percent }
+\newlabel{fig:iot}{{1}{1}}
+\citation{xiong1}
+\citation{tii-Heterogeneous}
+\citation{fedprox}
+\citation{moon}
+\citation{fastppo}
+\citation{feddyn}
+\citation{tfl-dt}
+\citation{fblg}
+\citation{fedcfa}
+\@writefile{toc}{\contentsline {section}{\numberline {II}Related work}{2}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {II-A} Non-IID IoT Systems}{2}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {II-B}Existing Solutions}{2}{}\protected@file@percent }
+\citation{yang2025scalesign}
+\citation{fedavg}
+\citation{dp}
+\citation{dpprotocols}
+\@writefile{toc}{\contentsline {section}{\numberline {III}The System Model and Definitions}{3}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {III-A}Federated Learning Framework}{3}{}\protected@file@percent }
+\newlabel{eq:fl_objective}{{1}{3}}
+\newlabel{eq:fedavg}{{2}{3}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {III-B}Differential Privacy}{3}{}\protected@file@percent }
+\newlabel{eq:dp_def}{{3}{3}}
+\newlabel{eq:sensitivity}{{4}{3}}
+\newlabel{eq:ldp_def}{{5}{3}}
+\newlabel{eq:ldp_label}{{6}{3}}
+\newlabel{eq:ldp_size}{{7}{3}}
+\newlabel{eq:opt_alloc}{{8}{3}}
+\citation{pami}
+\citation{jsd}
+\citation{kl}
+\@writefile{toc}{\contentsline {section}{\numberline {IV}Motivation}{4}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {IV-A}Dual Skewed Non-IID Data Leads to Worse Global Model Performance Degradation}{4}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Impact of dual skewed non-IID data on global model training induced by heterogeneous label distributions among clients and sample size.}}{4}{}\protected@file@percent }
+\newlabel{fig:acc vs com}{{2}{4}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {IV-B}Deep Understanding of Performance Degradation}{4}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {IV-C}Discover Potential Constraints Among Participants}{4}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces X-axis(k) is the index of the singular values, and y-axis is the logarithm of the singular values. The red lines represent isomorphic scenarios, and the three lines a,b,c represent paired clients with small and relatively large differences and unpaired, respectively. }}{4}{}\protected@file@percent }
+\newlabel{fig:demension}{{3}{4}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {IV-D}Promoting Alignment of Model Update Directions Among Participants}{4}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {V}Proposed Method}{4}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {V-A}Quantify Data Distribution Differences}{4}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {V-B}Client Pairing Algorithm}{5}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {V-B.1}Data Upload and JSDN Matrix Generation}{5}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {V-B.2}Client Pairing Process}{5}{}\protected@file@percent }
+\@writefile{loa}{\contentsline {algocf}{\numberline {1}{\ignorespaces Client Pairing}}{5}{}\protected@file@percent }
+\newlabel{alg:client_pairing}{{1}{5}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {V-C}FCPC}{5}{}\protected@file@percent }
+\citation{resnet}
+\citation{mobilenetv2}
+\citation{cifar10}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Framework of FCPC. The left part demonstrates the process that participants in federated learning upload the label distribution and data size to the server after local differential privacy (LDP) processing. The server then calculates the JSDN matrix and returns the pairing sequence. The right part shows the pairing training process of the participants. Taking the red client pair as an example: the server initializes the global model and distributes it to the clients (Steps 1 and 2). At the end of each training round, between the client pairs, the local weights need to be uploaded to the paired client as a constraint term for the client in the next round (Step 3). Meanwhile, the weights are uploaded to the server for global aggregation (Steps 4 and 5).}}{6}{}\protected@file@percent }
+\newlabel{fig:FCPC}{{4}{6}}
+\newlabel{equa:beta}{{14}{6}}
+\@writefile{loa}{\contentsline {algocf}{\numberline {2}{\ignorespaces FCPC (Proposed Framework)}}{6}{}\protected@file@percent }
+\newlabel{alg:FCPC}{{2}{6}}
+\@writefile{toc}{\contentsline {section}{\numberline {VI}Performance Analysis}{6}{}\protected@file@percent }
+\citation{MNIST}
+\citation{fedavg}
+\citation{fedprox}
+\citation{moon}
+\citation{fblg}
+\citation{fedcfa}
+\@writefile{toc}{\contentsline {subsection}{\numberline {VI-A}Experimental Setups}{7}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {VI-B}Performance Under Single Types of Non-IID Scenarios}{7}{}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {I}{\ignorespaces Test Accuracy on MNIST and FEMNIST Under Single Types of Non-IID Scenarios}}{7}{}\protected@file@percent }
+\newlabel{tab:single}{{I}{7}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {VI-C}Performance Under Dual Types of Non-IID Scenarios}{7}{}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {II}{\ignorespaces Performance Comparison Under Different Levels of Dual-Skewed Non-IID Data on CIFAR-10 and CIFAR-100}}{7}{}\protected@file@percent }
+\newlabel{tab:dual}{{II}{7}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {VI-D} Orthogonality of FCPC with Existing FL Algorithms}{7}{}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {III}{\ignorespaces Orthogonality Analysis of FCPC Integration With Existing FL Algorithms (ResNet-18, CIFAR10)}}{8}{}\protected@file@percent }
+\newlabel{tab:add FCPC}{{III}{8}}
+\@writefile{lot}{\contentsline {table}{\numberline {IV}{\ignorespaces Orthogonality Analysis of FCPC Integration With Existing FL Algorithms (TinyImageNet)}}{8}{}\protected@file@percent }
+\newlabel{tab:tinyimagenet}{{IV}{8}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {VI-E}Ablation Study}{8}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Ablation studies of \(\lambda \). We set the value of \(\alpha \) to 0.5 and select the MNIST and FEMNIST datasets to conduct experiments with \(\lambda \) taking values from the set \(\{0.1, 0.2, 0.3, 0.4\}\) to explore the appropriate value of \(\lambda \).}}{8}{}\protected@file@percent }
+\newlabel{fig:enter-label}{{5}{8}}
+\@writefile{lot}{\contentsline {table}{\numberline {V}{\ignorespaces Performance comparison of different dissimilarity metrics at $\alpha = 0.5$. JSDN represents the comprehensive indicator of Jensen-Shannon divergence and data size.}}{8}{}\protected@file@percent }
+\newlabel{tab:dissimilarity}{{V}{8}}
+\newlabel{tab:comparsion of metrics}{{V}{8}}
+\@writefile{lof}{\contentsline {figure}{\numberline {6}{\ignorespaces \textbf  {Ablation studies on $\beta $.} We select a value of $\beta $ that is as adaptive as possible to multiple scenarios by comparing the effect of different regularization strengths on model performance on FedAvg.}}{9}{}\protected@file@percent }
+\newlabel{fig:beta}{{6}{9}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {VI-F}Engineering Applications}{9}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {7}{\ignorespaces The heterogeneous information sources in urban and rural areas form the RSU, while different modes of transportation such as trucks and cars form the OBU, collectively forming the heterogeneous data network of the IoT.}}{9}{}\protected@file@percent }
+\newlabel{fig:placeholder}{{7}{9}}
+\@writefile{lof}{\contentsline {figure}{\numberline {8}{\ignorespaces \textbf  {FCPC in IoT.} This diagram illustrates the engineering application logic of the FCPC framework in IoT-driven intelligent transportation systems. }}{9}{}\protected@file@percent }
+\newlabel{fig:IoT}{{8}{9}}
+\bibstyle{IEEEtran}
+\bibdata{cite}
+\bibcite{review3}{1}
+\bibcite{Zhulin}{2}
+\bibcite{shengao11}{3}
+\bibcite{shengao12}{4}
+\bibcite{shengao13}{5}
+\bibcite{tii-ClientSelectin}{6}
+\bibcite{iot2}{7}
+\bibcite{tii-Spatio–TemporalAware}{8}
+\bibcite{fesvibs}{9}
+\bibcite{splitfed}{10}
+\bibcite{tii-Personalized2}{11}
+\bibcite{xiong1}{12}
+\bibcite{tii-Heterogeneous}{13}
+\bibcite{fedprox}{14}
+\bibcite{moon}{15}
+\bibcite{fastppo}{16}
+\bibcite{feddyn}{17}
+\bibcite{tfl-dt}{18}
+\bibcite{fblg}{19}
+\bibcite{fedcfa}{20}
+\bibcite{yang2025scalesign}{21}
+\bibcite{fedavg}{22}
+\bibcite{dp}{23}
+\bibcite{dpprotocols}{24}
+\bibcite{pami}{25}
+\bibcite{jsd}{26}
+\bibcite{kl}{27}
+\bibcite{resnet}{28}
+\bibcite{mobilenetv2}{29}
+\bibcite{cifar10}{30}
+\bibcite{MNIST}{31}
+\@writefile{toc}{\contentsline {section}{\numberline {VII}Conclusion}{10}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{References}{10}{}\protected@file@percent }
+\gdef \@abspage@last{10}

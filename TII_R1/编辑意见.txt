@@ -1,0 +1,51 @@
+Fw:IEEE Transactions on Industrial Informatics - Decision on Manuscript ID TII-26-0982
+16-Jul-2026
+
+
+Dear Authors (CC to Associate Editor, Reviewers),
+
+Manuscript ID TII-26-0982 entitled "FCPC: A Dissimilarity-Aware Plug-and-Play Federated Learning Framework for Non-IID IoT Systems" which you submitted to the IEEE Transactions on Industrial Informatics, has been reviewed. The comments are included at the bottom of this letter.
+
+Much to my regret, I must inform you that, based on the recommendation of the Associate  Editor in charge, the submitted manuscript has not been accepted for publication in the Transaction on Industrial Informatics.
+
+Although the manuscript is not acceptable in its current form, it has merit, and a new manuscript may be submitted, which takes into consideration the comments of the Associate Editor and the reviewers. Please understand, though, that this is a decision of reject. Therefore, you must do an in-depth revision and provide a clear indication of how you addressed the received comments. In a sense, this type of decision is replacing the previous category of a major revision, which has been abolished. As described below, it is treated similarly to a traditional revision, but a more comprehensive revision is expected.
+ 
+Please note that the minimum time before the resubmission is 1 month to allow the authors to make an in-depth revision, and that the window for resubmission closes 6 months after the date of this decision letter. If you cannot submit within this window, it will be treated as a new submission.
+
+With the resubmission, please include a cover letter that mentions this manuscript’s ID and describes the major changes to the manuscript, focusing on the new results and how these increase the research contribution. This should be accompanied by a point-by-point explanation of how the previous comments from the reviewers were addressed. In addition, highlight the changes in the paper (or at least use a different font color). If the changes are too much, highlight only the major additions to the paper. Please do not submit a paper with track changes, as this makes the paper difficult to read.
+
+Your revised manuscript will be assigned a new manuscript ID and will be treated as a new manuscript with the following exception: In the interest of fairness, we will endeavor to assign it to the same Associate Editor who handled your paper, and the same reviewers, if they are still available. For this reason, it is imperative to include this manuscript’s ID in the cover letter.
+
+Please note that resubmitting your manuscript does not guarantee eventual acceptance, and that your re-submission will be subject to peer review again.
+
+I look forward to your resubmission.
+
+
+Sincerely,
+
+Transactions on Industrial Informatics
+yanzhang@ieee.org
+****************************************************
+Encl.:  
+Reviewer: 1
+
+Comments to the Author
+Despite the significant merits, the manuscript has several aspects that need further improvement and clarification. Firstly, the experimental analysis of computational and communication overhead is insufficient: while the manuscript claims negligible computational overhead for FCPC, it only provides accuracy comparison results and lacks quantitative experimental data on metrics such as training time per round, communication traffic between clients and the server, and computational resource consumption (e.g., CPU/GPU utilization) on edge devices, which are critical for validating the suitability of FCPC for resource-constrained IoT edge devices and making direct comparisons with baseline methods in terms of overhead. Secondly, the generalization of FCPC to other types of data heterogeneity (e.g., feature skew, concept drift) is not explored; the manuscript focuses solely on dual-skewed label and quantity heterogeneity, but real IoT systems often face more complex heterogeneous data characteristics, and the lack of relevant experimental or theoretical analysis limits the broader applicability of the proposed framework. Thirdly, the hyperparameter tuning section lacks a more in-depth discussion: although ablation studies determine the optimal values of λ (0.3) and β (0.2), the manuscript does not analyze the sensitivity of these parameters across different IoT device scales (e.g., varying numbers of clients) and different data heterogeneity degrees, nor provide adaptive tuning strategies for dynamic IoT environments, which may affect the practical application of FCPC in real-time evolving IoT systems. Fourthly, the recent scheme, enhanced model poisoning attack and multi-strategy defense in federated learning, is suggested to be discussed. Finally, the discussion on the scalability of FCPC is limited: the experiments are conducted with a fixed number of clients, and there is no analysis on how FCPC performs when the number of IoT clients scales up (e.g., hundreds or thousands of edge devices) and when new clients join dynamically, which is a key requirement for large-scale IoT federated learning systems.
+
+Reviewer: 2
+
+Comments to the Author
+I am unable to locate the author's responses to my previous comments.
+
+Reviewer: 3
+
+Comments to the Author
+This paper proposes a federated learning framework called FCPC to address dual-skewed non-IID data in IoT systems, introducing a JSDN metric for heterogeneity quantification and a client pairing mechanism with a pairwise regularization term. While the motivation is clear and the plug-and-play property is appealing, the technical contributions are incremental, the theoretical analysis contains significant gaps and questionable assumptions, and the experimental evaluation does not sufficiently justify the claimed superiority. The paper does not meet the standards expected for publication in this journal.
+- The theoretical convergence analysis is built upon several assumptions that are either unrealistic or inadequately justified. The gradient dissimilarity bound is assumed to depend linearly on the maximum JSDN value, but no rigorous derivation or empirical validation is provided to support this relationship. The strong convexity assumption near the optimum is invoked without explanation, which is problematic for deep neural networks with non-convex objectives. Moreover, the proof of the main convergence theorem relies on a learning rate schedule and regularization parameter that depend on unknown quantities such as the maximum gradient norm and the initial error. This makes the result difficult to interpret or use in practice. The authors should either strengthen the theoretical foundation with more standard assumptions or significantly revise the analysis to be more rigorous and practically meaningful.
+- The client pairing algorithm based on greedy maximization of JSDN lacks a clear theoretical justification for why pairing the most dissimilar clients is optimal. The paper does not discuss whether a different pairing strategy, such as balancing dissimilarities across pairs or considering global diversity, could yield better performance. Furthermore, the handling of odd numbers of clients by simply discarding the most representative client is arbitrary and wasteful; this could reduce the effective participation rate and bias the training process. The authors should provide a principled justification for their pairing strategy and compare it with alternative matching schemes, such as stable matching or optimization-based pairing, to demonstrate that their choice is indeed superior.
+- The experimental evaluation, while extensive, suffers from several weaknesses. The comparison with baselines is not entirely fair because FCPC adds a regularization term and a pairing mechanism, while the baselines are evaluated without any analogous enhancement. The claimed "plug-and-play" advantage is demonstrated by adding FCPC to baselines, but the improvement could simply come from the added regularization rather than the dissimilarity-aware pairing. To isolate the effect of pairing, the authors should compare FCPC against a version that uses random pairing or pairing based on similarity rather than dissimilarity. Additionally, the computational overhead analysis is superficial; the paper claims negligible overhead but does not report training time, communication cost, or memory usage. Finally, the real-world IoT scenario validation is limited to standard image datasets, which do not adequately represent the diversity and complexity of practical IoT deployments such as sensor data streams or time-series signals.  
+
+AE Comments:
+Associate Editor
+Comments to the Author:
+The reviewers pointed out that the paper had some obvious problems and was not suitable for publication. I suggest that the author make revisions based on the reviewers' comments and then resubmit it. Thank you.
