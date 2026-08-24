@@ -1,0 +1,54 @@
+{
+  "seed": 42,
+  "dataset": {
+    "name": "cifar10",
+    "num_classes": 10,
+    "input_channels": 3,
+    "root": "./data",
+    "download": false
+  },
+  "model": {
+    "name": "simple_cnn"
+  },
+  "federated": {
+    "num_clients": 4,
+    "clients_per_round": 4,
+    "rounds": 2,
+    "local_epochs": 1,
+    "batch_size": 32,
+    "aggregation": "weighted",
+    "num_workers": 0,
+    "device": "cuda",
+    "max_batches_per_client": 1,
+    "max_eval_batches": 2
+  },
+  "partition": {
+    "mode": "dual_skew",
+    "alpha": 0.05,
+    "alpha_grid": [
+      0.05,
+      0.1,
+      0.5
+    ],
+    "quantity_skew": true
+  },
+  "algorithm": {
+    "name": "fedavg"
+  },
+  "fcpc": {
+    "enabled": true,
+    "lambda_jsdn": 0.3,
+    "beta": 0.2,
+    "epsilon": 1.0,
+    "metric": "jsdn"
+  },
+  "optimizer": {
+    "name": "sgd",
+    "lr": 0.01
+  },
+  "logging": {
+    "output_dir": "outputs/smoke",
+    "run_name": "cifar10_gpu_smoke",
+    "checkpoint_dir": "outputs/smoke"
+  }
+}

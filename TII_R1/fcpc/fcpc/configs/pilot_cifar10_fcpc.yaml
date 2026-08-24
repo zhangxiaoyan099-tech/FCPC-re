@@ -1,0 +1,54 @@
+{
+  "seed": 42,
+  "dataset": {
+    "name": "cifar10",
+    "num_classes": 10,
+    "input_channels": 3,
+    "root": "./data",
+    "download": false
+  },
+  "model": {
+    "name": "simple_cnn"
+  },
+  "federated": {
+    "num_clients": 10,
+    "clients_per_round": 10,
+    "rounds": 20,
+    "local_epochs": 1,
+    "batch_size": 64,
+    "aggregation": "weighted",
+    "num_workers": 2,
+    "device": "cuda",
+    "max_batches_per_client": 20,
+    "max_eval_batches": 50
+  },
+  "partition": {
+    "mode": "dual_skew",
+    "alpha": 0.1,
+    "alpha_grid": [
+      0.05,
+      0.1,
+      0.5
+    ],
+    "quantity_skew": true
+  },
+  "algorithm": {
+    "name": "fedavg"
+  },
+  "fcpc": {
+    "enabled": true,
+    "lambda_jsdn": 0.3,
+    "beta": 0.2,
+    "epsilon": 1.0,
+    "metric": "jsdn"
+  },
+  "optimizer": {
+    "name": "sgd",
+    "lr": 0.01
+  },
+  "logging": {
+    "output_dir": "outputs/pilot",
+    "run_name": "cifar10_fcpc_pilot",
+    "checkpoint_dir": "outputs/pilot"
+  }
+}
