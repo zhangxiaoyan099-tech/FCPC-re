@@ -1,0 +1,64 @@
+{
+  "seed": 42,
+  "dataset": {
+    "name": "cifar10",
+    "num_classes": 10,
+    "input_channels": 3,
+    "root": "./data",
+    "download": false,
+    "augment": true,
+    "normalize": true
+  },
+  "model": {
+    "name": "resnet18"
+  },
+  "federated": {
+    "num_clients": 10,
+    "clients_per_round": 10,
+    "rounds": 30,
+    "local_epochs": 1,
+    "batch_size": 64,
+    "num_workers": 2,
+    "max_batches_per_client": null,
+    "max_eval_batches": null,
+    "aggregation": "weighted",
+    "device": "cuda"
+  },
+  "partition": {
+    "mode": "dual_skew",
+    "alpha": 0.1
+  },
+  "algorithm": {
+    "name": "fedavg"
+  },
+  "fcpc": {
+    "enabled": true,
+    "lambda_jsdn": 0.3,
+    "beta": 0.001,
+    "epsilon": 1.0,
+    "pairing_strategy": "fair_greedy_dissimilar"
+  },
+  "optimizer": {
+    "name": "sgd",
+    "lr": 0.03,
+    "momentum": 0.9,
+    "weight_decay": 0.0005,
+    "nesterov": false
+  },
+  "scheduler": {
+    "name": "constant"
+  },
+  "evaluation": {
+    "validation_fraction": 0.1,
+    "validation_seed": 10042,
+    "test_every_round": false
+  },
+  "profiling": {
+    "sample_interval_s": 0.2
+  },
+  "logging": {
+    "output_dir": "outputs/cifar10_plan",
+    "checkpoint_dir": "outputs/cifar10_plan",
+    "run_name": "cifar10_dual_a0p1_fcpc_beta1em03_r30"
+  }
+}
