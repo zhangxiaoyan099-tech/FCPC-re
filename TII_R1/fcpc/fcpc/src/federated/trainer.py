@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import cos, pi
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Dict
@@ -14,6 +15,7 @@ from src.data.partition import (
     client_label_histograms,
     natural_client_partition,
 )
+from src.data.split import stratified_holdout_indices
 from src.fcpc.jsdn import build_jsdn_matrix
 from src.fcpc.pairing import greedy_high_dissimilarity_pairing
 from src.federated.client import Client
@@ -85,6 +87,8 @@ class Trainer:
         partition_cfg = self.config.get("partition", {})
         fcpc_cfg = self.config.get("fcpc", {})
         optimizer_cfg = self.config.get("optimizer", {})
+        scheduler_cfg = self.config.get("scheduler", {})
+        evaluation_cfg = self.config.get("evaluation", {})
         logging_cfg = self.config.get("logging", {})
         algorithm_cfg = self.config.get("algorithm", {})
 
@@ -108,6 +112,21 @@ class Trainer:
             num_classes=num_classes,
             **dataset_kwargs,
         )
+        validation_fraction = float(evaluation_cfg.get("validation_fraction", 0.0))
+        validation_dataset = None
+        if validation_fraction > 0.0:
+            validation_kwargs = dict(dataset_kwargs)
+            # A validation view of the training split must be deterministic.
+            validation_kwargs["augment"] = False
+            validation_dataset = load_dataset(
+                dataset_name,
+                root=dataset_cfg.get("root", "./data"),
+                train=True,
+                download=False,
+                seed=seed,
+                num_classes=num_classes,
+                **validation_kwargs,
+            )
         test_dataset = load_dataset(
             dataset_name,
             root=dataset_cfg.get("root", "./data"),
@@ -118,21 +137,37 @@ class Trainer:
             **dataset_kwargs,
         )
 
-        labels = get_targets(train_dataset)
+        all_labels = get_targets(train_dataset)
+        train_indices, validation_indices = stratified_holdout_indices(
+            all_labels,
+            validation_fraction=validation_fraction,
+            seed=int(evaluation_cfg.get("validation_seed", seed + 10_000)),
+        )
+        train_labels = [all_labels[index] for index in train_indices]
         partition_mode = str(partition_cfg.get("mode", "dual_skew")).lower()
         if partition_mode == "natural":
-            client_indices = natural_client_partition(get_client_ids(train_dataset))
-            num_clients = len(client_indices)
+            all_client_ids = get_client_ids(train_dataset)
+            train_client_ids = [all_client_ids[index] for index in train_indices]
+            relative_client_indices = natural_client_partition(train_client_ids)
+            num_clients = len(relative_client_indices)
         else:
             num_clients = int(federated.get("num_clients", 10))
-            client_indices = build_client_indices(
-                labels,
+            relative_client_indices = build_client_indices(
+                train_labels,
                 num_clients=num_clients,
                 partition=partition_mode,
                 alpha=float(partition_cfg.get("alpha", 0.1)),
                 seed=seed,
             )
-        histograms = client_label_histograms(labels, client_indices, num_classes=num_classes)
+        client_indices = {
+            client_id: [train_indices[position] for position in positions]
+            for client_id, positions in relative_client_indices.items()
+        }
+        histograms = client_label_histograms(
+            train_labels,
+            relative_client_indices,
+            num_classes=num_classes,
+        )
         batch_size = int(federated.get("batch_size", 64))
         clients: list[Client] = []
         for client_id in range(num_clients):
@@ -179,7 +214,14 @@ class Trainer:
                 "alpha",
                 "beta",
                 "lambda_jsdn",
+                "learning_rate",
                 "train_clients",
+                "train_examples",
+                "train_task_loss",
+                "train_algorithm_loss",
+                "train_fcpc_raw_loss",
+                "train_fcpc_weighted_loss",
+                "train_total_loss",
                 "pairing_strategy",
                 "pair_count",
                 "unpaired_count",
@@ -196,29 +238,66 @@ class Trainer:
                 "peer_upload_bytes",
                 "round_total_bytes",
                 "cumulative_total_bytes",
+                "val_loss",
+                "val_acc",
                 "test_loss",
                 "test_acc",
             ],
         )
 
-        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=int(federated.get("num_workers", 0)))
+        num_workers = int(federated.get("num_workers", 0))
+        validation_loader = None
+        if validation_dataset is not None and validation_indices:
+            validation_loader = DataLoader(
+                Subset(validation_dataset, validation_indices),
+                batch_size=batch_size,
+                shuffle=False,
+                num_workers=num_workers,
+            )
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+        )
         rounds = int(federated.get("rounds", 100))
         clients_per_round = int(federated.get("clients_per_round", num_clients))
         local_epochs = int(federated.get("local_epochs", 1))
-        lr = float(optimizer_cfg.get("lr", 0.01))
+        base_lr = float(optimizer_cfg.get("lr", 0.01))
+        optimizer_name = str(optimizer_cfg.get("name", "sgd"))
+        momentum = float(optimizer_cfg.get("momentum", 0.0))
+        weight_decay = float(optimizer_cfg.get("weight_decay", 0.0))
+        nesterov = bool(optimizer_cfg.get("nesterov", False))
         use_fcpc = bool(fcpc_cfg.get("enabled", True))
         beta = float(fcpc_cfg.get("beta", 0.2))
         max_batches = federated.get("max_batches_per_client")
         max_batches = None if max_batches in (None, 0) else int(max_batches)
         checkpoint_dir = Path(logging_cfg.get("checkpoint_dir", "outputs/checkpoints"))
+        checkpoint_path = checkpoint_dir / f"{run_name}.pt"
+        best_checkpoint_path = checkpoint_dir / f"{run_name}_best.pt"
         profiling_cfg = self.config.get("profiling", {})
         profile_interval_s = float(profiling_cfg.get("sample_interval_s", 0.1))
         model_bytes = state_dict_nbytes(global_state)
         cumulative_total_bytes = 0
 
-        final_metrics = {"test_loss": None, "test_acc": None}
+        max_eval_batches = federated.get("max_eval_batches")
+        test_every_round = bool(
+            evaluation_cfg.get("test_every_round", validation_loader is None)
+        )
+        best_val_acc = float("-inf")
+        best_val_loss = float("inf")
+        best_round = 0
+        best_global_state = None
+        final_test_metrics = {"test_loss": None, "test_acc": None}
+        final_val_metrics = {"test_loss": None, "test_acc": None}
         for round_idx in range(rounds):
             round_started = perf_counter()
+            round_lr = self._learning_rate_for_round(
+                base_lr,
+                round_idx=round_idx,
+                total_rounds=rounds,
+                scheduler_cfg=scheduler_cfg,
+            )
             selected = server.sample_clients(clients_per_round, seed + round_idx)
             pairing_started = perf_counter()
             pairing = server.pair_selected(
@@ -238,6 +317,7 @@ class Trainer:
             monitor = ResourceMonitor(device=device, interval_s=profile_interval_s).start()
             try:
                 local_states = []
+                local_metrics = []
                 for client_id in selected:
                     client = clients[client_id]
                     pair_id = pairing.pair_map.get(client_id)
@@ -251,27 +331,53 @@ class Trainer:
                         num_classes=num_classes,
                         input_channels=input_channels,
                     )
-                    state = client.local_train(
+                    state, metrics = client.local_train(
                         local_model,
                         algorithm,
                         global_state,
                         paired_previous_state=paired_previous,
                         use_fcpc=use_fcpc,
                         beta=beta,
-                        lr=lr,
+                        lr=round_lr,
+                        optimizer_name=optimizer_name,
+                        momentum=momentum,
+                        weight_decay=weight_decay,
+                        nesterov=nesterov,
                         local_epochs=local_epochs,
                         device=device,
                         max_batches=max_batches,
+                        return_metrics=True,
                     )
                     local_states.append(state)
+                    local_metrics.append(metrics)
                 global_state = server.aggregate(selected, local_states)
                 model.load_state_dict(global_state)
-                final_metrics = self.evaluate(
-                    model,
-                    test_loader,
-                    device=device,
-                    max_batches=federated.get("max_eval_batches"),
-                )
+                round_train_metrics = self._aggregate_local_metrics(local_metrics)
+                if validation_loader is not None:
+                    final_val_metrics = self.evaluate(
+                        model,
+                        validation_loader,
+                        device=device,
+                        max_batches=max_eval_batches,
+                    )
+                    if float(final_val_metrics["test_acc"]) > best_val_acc:
+                        best_val_acc = float(final_val_metrics["test_acc"])
+                        best_val_loss = float(final_val_metrics["test_loss"])
+                        best_round = round_idx + 1
+                        best_global_state = {
+                            key: value.detach().cpu().clone()
+                            for key, value in global_state.items()
+                        }
+                should_test = test_every_round or round_idx == rounds - 1
+                round_test_metrics = {"test_loss": "", "test_acc": ""}
+                if should_test:
+                    final_test_metrics = self.evaluate(
+                        model,
+                        test_loader,
+                        device=device,
+                        max_batches=max_eval_batches,
+                    )
+                    round_test_metrics = final_test_metrics
             finally:
                 resource_stats = monitor.stop()
 
@@ -292,7 +398,14 @@ class Trainer:
                     "alpha": partition_cfg.get("alpha", ""),
                     "beta": beta,
                     "lambda_jsdn": fcpc_cfg.get("lambda_jsdn", ""),
+                    "learning_rate": round_lr,
                     "train_clients": len(selected),
+                    "train_examples": round_train_metrics["processed_examples"],
+                    "train_task_loss": round_train_metrics["task_loss"],
+                    "train_algorithm_loss": round_train_metrics["algorithm_loss"],
+                    "train_fcpc_raw_loss": round_train_metrics["fcpc_raw_loss"],
+                    "train_fcpc_weighted_loss": round_train_metrics["fcpc_weighted_loss"],
+                    "train_total_loss": round_train_metrics["total_loss"],
                     "pairing_strategy": pairing_strategy,
                     "pair_count": len(pairing.pairs),
                     "unpaired_count": len(pairing.unpaired),
@@ -309,14 +422,64 @@ class Trainer:
                     "peer_upload_bytes": peer_upload_bytes,
                     "round_total_bytes": round_total_bytes,
                     "cumulative_total_bytes": cumulative_total_bytes,
-                    "test_loss": final_metrics["test_loss"],
-                    "test_acc": final_metrics["test_acc"],
+                    "val_loss": final_val_metrics["test_loss"] if validation_loader is not None else "",
+                    "val_acc": final_val_metrics["test_acc"] if validation_loader is not None else "",
+                    "test_loss": round_test_metrics["test_loss"],
+                    "test_acc": round_test_metrics["test_acc"],
                 }
             )
 
-        checkpoint_path = checkpoint_dir / f"{run_name}.pt"
-        save_checkpoint({"model_state": global_state, "config": self.config, "metrics": final_metrics}, checkpoint_path)
-        return {"log_path": str(output_dir / f"{run_name}.csv"), "checkpoint_path": str(checkpoint_path), **final_metrics}
+        last_global_state = global_state
+        last_test_metrics = final_test_metrics
+        selected_test_metrics = last_test_metrics
+        if best_global_state is not None:
+            model.load_state_dict(best_global_state)
+            selected_test_metrics = self.evaluate(
+                model,
+                test_loader,
+                device=device,
+                max_batches=max_eval_batches,
+            )
+            save_checkpoint(
+                {
+                    "model_state": best_global_state,
+                    "config": self.config,
+                    "metrics": {
+                        "best_round": best_round,
+                        "best_val_loss": best_val_loss,
+                        "best_val_acc": best_val_acc,
+                        **selected_test_metrics,
+                    },
+                },
+                best_checkpoint_path,
+            )
+
+        save_checkpoint(
+            {
+                "model_state": last_global_state,
+                "config": self.config,
+                "metrics": {
+                    "last_test_loss": last_test_metrics["test_loss"],
+                    "last_test_acc": last_test_metrics["test_acc"],
+                    "best_round": best_round or rounds,
+                    "best_val_loss": None if best_global_state is None else best_val_loss,
+                    "best_val_acc": None if best_global_state is None else best_val_acc,
+                },
+            },
+            checkpoint_path,
+        )
+        return {
+            "log_path": str(output_dir / f"{run_name}.csv"),
+            "checkpoint_path": str(checkpoint_path),
+            "best_checkpoint_path": str(best_checkpoint_path) if best_global_state is not None else "",
+            "best_round": best_round or rounds,
+            "best_val_loss": None if best_global_state is None else best_val_loss,
+            "best_val_acc": None if best_global_state is None else best_val_acc,
+            "test_loss": selected_test_metrics["test_loss"],
+            "test_acc": selected_test_metrics["test_acc"],
+            "last_test_loss": last_test_metrics["test_loss"],
+            "last_test_acc": last_test_metrics["test_acc"],
+        }
 
     def evaluate(self, model, data_loader, device: str, max_batches: int | None = None) -> Dict[str, float]:
         import torch
@@ -340,6 +503,52 @@ class Trainer:
                 total_samples += int(y.numel())
         total_samples = max(total_samples, 1)
         return {"test_loss": total_loss / total_samples, "test_acc": total_correct / total_samples}
+
+    @staticmethod
+    def _aggregate_local_metrics(local_metrics: list[Dict[str, Any]]) -> Dict[str, float]:
+        """Compute example-weighted local-loss means for a communication round."""
+        total_examples = sum(int(metrics.get("processed_examples", 0)) for metrics in local_metrics)
+        denominator = max(total_examples, 1)
+        result: Dict[str, float] = {
+            "processed_examples": float(total_examples),
+            "processed_batches": float(
+                sum(int(metrics.get("processed_batches", 0)) for metrics in local_metrics)
+            ),
+        }
+        for name in (
+            "task_loss",
+            "algorithm_loss",
+            "fcpc_raw_loss",
+            "fcpc_weighted_loss",
+            "total_loss",
+        ):
+            weighted_sum = sum(
+                float(metrics.get(name, 0.0)) * int(metrics.get("processed_examples", 0))
+                for metrics in local_metrics
+            )
+            result[name] = weighted_sum / denominator
+        return result
+
+    @staticmethod
+    def _learning_rate_for_round(
+        base_lr: float,
+        round_idx: int,
+        total_rounds: int,
+        scheduler_cfg: Dict[str, Any],
+    ) -> float:
+        """Resolve a round-level learning rate for stateless local optimizers."""
+        name = str(scheduler_cfg.get("name", "constant")).lower()
+        if name in {"constant", "none"}:
+            return float(base_lr)
+        if name == "cosine":
+            min_lr = float(scheduler_cfg.get("min_lr", 0.0))
+            progress = round_idx / max(total_rounds - 1, 1)
+            return min_lr + 0.5 * (float(base_lr) - min_lr) * (1.0 + cos(pi * progress))
+        if name == "step":
+            step_size = max(int(scheduler_cfg.get("step_size", 50)), 1)
+            gamma = float(scheduler_cfg.get("gamma", 0.1))
+            return float(base_lr) * gamma ** (round_idx // step_size)
+        raise ValueError(f"unsupported scheduler: {name}")
 
     @staticmethod
     def _select_device(requested: str) -> str:

@@ -211,10 +211,24 @@ def load_dataset(name: str, root: str | Path, train: bool = True, download: bool
         transform = transforms.Compose([transforms.ToTensor()])
         return torchvision.datasets.MNIST(root=root, train=train, transform=transform, download=download)
     if key == "cifar10":
-        transform = transforms.Compose([transforms.ToTensor()])
+        transform = _build_cifar_transform(
+            transforms,
+            train=train,
+            augment=bool(kwargs.get("augment", False)),
+            normalize=bool(kwargs.get("normalize", False)),
+            mean=(0.4914, 0.4822, 0.4465),
+            std=(0.2470, 0.2435, 0.2616),
+        )
         return torchvision.datasets.CIFAR10(root=root, train=train, transform=transform, download=download)
     if key == "cifar100":
-        transform = transforms.Compose([transforms.ToTensor()])
+        transform = _build_cifar_transform(
+            transforms,
+            train=train,
+            augment=bool(kwargs.get("augment", False)),
+            normalize=bool(kwargs.get("normalize", False)),
+            mean=(0.5071, 0.4867, 0.4408),
+            std=(0.2675, 0.2565, 0.2761),
+        )
         return torchvision.datasets.CIFAR100(root=root, train=train, transform=transform, download=download)
     if key == "emnist_byclass":
         transform = transforms.Compose([transforms.ToTensor()])
@@ -230,6 +244,27 @@ def load_dataset(name: str, root: str | Path, train: bool = True, download: bool
         transform = transforms.Compose([transforms.Resize((64, 64)), transforms.ToTensor()])
         return torchvision.datasets.ImageFolder(str(image_root), transform=transform)
     raise ValueError(f"unsupported dataset: {name}")
+
+
+def _build_cifar_transform(transforms, train: bool, augment: bool, normalize: bool, mean, std):
+    """Build deterministic evaluation and optional training transforms.
+
+    Augmentation is applied only to the training view.  The switches default
+    to ``False`` in :func:`load_dataset` so historical configs keep their old
+    behavior; the new CIFAR experiment configs enable both explicitly.
+    """
+    operations = []
+    if train and augment:
+        operations.extend(
+            [
+                transforms.RandomCrop(32, padding=4),
+                transforms.RandomHorizontalFlip(),
+            ]
+        )
+    operations.append(transforms.ToTensor())
+    if normalize:
+        operations.append(transforms.Normalize(mean, std))
+    return transforms.Compose(operations)
 
 
 def load_torchvision_dataset(name: str, root: str | Path, train: bool = True, download: bool = False):
