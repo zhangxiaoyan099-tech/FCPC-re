@@ -23,11 +23,19 @@ def summarize(path: Path, tail: int) -> dict[str, object]:
     val_values = [value for row in rows if (value := optional_float(row.get("val_acc"))) is not None]
     test_values = [value for row in rows if (value := optional_float(row.get("test_acc"))) is not None]
     ratios = []
+    beta_values = []
+    effective_beta_values = []
     for row in rows:
         task = optional_float(row.get("train_task_loss"))
         weighted = optional_float(row.get("train_fcpc_weighted_loss"))
         if task is not None and weighted is not None and task > 0:
             ratios.append(weighted / task)
+        beta_value = optional_float(row.get("beta"))
+        if beta_value is not None:
+            beta_values.append(beta_value)
+        effective_beta = optional_float(row.get("mean_effective_beta"))
+        if effective_beta is not None:
+            effective_beta_values.append(effective_beta)
 
     return {
         "run": path.stem,
@@ -37,6 +45,11 @@ def summarize(path: Path, tail: int) -> dict[str, object]:
         "best_val": max(val_values) if val_values else None,
         "final_test": test_values[-1] if test_values else None,
         "tail_fcpc_task_ratio": mean(ratios[-tail:]) if ratios else None,
+        "beta_start": beta_values[0] if beta_values else None,
+        "beta_end": beta_values[-1] if beta_values else None,
+        "tail_effective_beta": (
+            mean(effective_beta_values[-tail:]) if effective_beta_values else None
+        ),
     }
 
 
@@ -67,18 +80,26 @@ def main() -> None:
     )
     print(
         f"{'run':58} {'rnd':>4} {'last val':>10} {'tail val':>10} "
-        f"{'best val':>10} {'test':>10} {'FCPC/task':>10}"
+        f"{'best val':>10} {'test':>10} {'FCPC/task':>10} "
+        f"{'beta 0':>9} {'beta end':>9} {'eff beta':>9}"
     )
     for row in summaries:
         ratio = row["tail_fcpc_task_ratio"]
         ratio_text = "-" if ratio is None else f"{float(ratio):.3e}"
+        beta_start = row["beta_start"]
+        beta_end = row["beta_end"]
+        effective_beta = row["tail_effective_beta"]
+        beta_start_text = "-" if beta_start is None else f"{float(beta_start):.2e}"
+        beta_end_text = "-" if beta_end is None else f"{float(beta_end):.2e}"
+        effective_beta_text = "-" if effective_beta is None else f"{float(effective_beta):.2e}"
         print(
             f"{str(row['run'])[:58]:58} {int(row['rounds']):4d} "
             f"{format_percent(row['last_val']):>10} "
             f"{format_percent(row['tail_val_mean']):>10} "
             f"{format_percent(row['best_val']):>10} "
             f"{format_percent(row['final_test']):>10} "
-            f"{ratio_text:>10}"
+            f"{ratio_text:>10} "
+            f"{beta_start_text:>9} {beta_end_text:>9} {effective_beta_text:>9}"
         )
 
 

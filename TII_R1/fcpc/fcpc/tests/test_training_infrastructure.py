@@ -85,5 +85,35 @@ class LearningRateScheduleTests(unittest.TestCase):
         self.assertAlmostEqual(Trainer._learning_rate_for_round(0.1, 4, 5, config), 0.001)
 
 
+class FCPCBetaScheduleTests(unittest.TestCase):
+    def test_constant_beta_does_not_change(self) -> None:
+        values = [
+            Trainer._beta_for_round(0.01, round_idx, 5, "constant", 0.0)
+            for round_idx in range(5)
+        ]
+        self.assertEqual(values, [0.01] * 5)
+
+    def test_cosine_beta_starts_at_base_and_ends_at_minimum(self) -> None:
+        values = [
+            Trainer._beta_for_round(0.01, round_idx, 5, "cosine_decay", 0.0)
+            for round_idx in range(5)
+        ]
+        self.assertAlmostEqual(values[0], 0.01)
+        self.assertAlmostEqual(values[2], 0.005)
+        self.assertAlmostEqual(values[-1], 0.0)
+
+
+class FCPCPartnerWeightTests(unittest.TestCase):
+    def test_uniform_weight_is_one(self) -> None:
+        self.assertEqual(Trainer._partner_weight_for_pair(100, 900, "uniform"), 1.0)
+
+    def test_sample_ratio_has_no_factor_two(self) -> None:
+        small_from_large = Trainer._partner_weight_for_pair(100, 900, "sample_ratio")
+        large_from_small = Trainer._partner_weight_for_pair(900, 100, "sample_ratio")
+        self.assertAlmostEqual(small_from_large, 0.9)
+        self.assertAlmostEqual(large_from_small, 0.1)
+        self.assertAlmostEqual(small_from_large + large_from_small, 1.0)
+
+
 if __name__ == "__main__":
     unittest.main()

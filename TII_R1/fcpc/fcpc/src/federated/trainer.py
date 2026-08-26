@@ -212,7 +212,13 @@ class Trainer:
                 "algorithm",
                 "fcpc",
                 "alpha",
+                "beta_base",
                 "beta",
+                "beta_schedule",
+                "beta_min",
+                "partner_weighting",
+                "mean_partner_weight",
+                "mean_effective_beta",
                 "lambda_jsdn",
                 "learning_rate",
                 "train_clients",
@@ -269,7 +275,10 @@ class Trainer:
         weight_decay = float(optimizer_cfg.get("weight_decay", 0.0))
         nesterov = bool(optimizer_cfg.get("nesterov", False))
         use_fcpc = bool(fcpc_cfg.get("enabled", True))
-        beta = float(fcpc_cfg.get("beta", 0.2))
+        beta_base = float(fcpc_cfg.get("beta", 0.2))
+        beta_schedule = str(fcpc_cfg.get("beta_schedule", "constant")).lower()
+        beta_min = float(fcpc_cfg.get("min_beta", 0.0))
+        partner_weighting = str(fcpc_cfg.get("partner_weighting", "uniform")).lower()
         max_batches = federated.get("max_batches_per_client")
         max_batches = None if max_batches in (None, 0) else int(max_batches)
         checkpoint_dir = Path(logging_cfg.get("checkpoint_dir", "outputs/checkpoints"))
@@ -292,6 +301,13 @@ class Trainer:
         final_val_metrics = {"test_loss": None, "test_acc": None}
         for round_idx in range(rounds):
             round_started = perf_counter()
+            beta = self._beta_for_round(
+                beta_base,
+                round_idx=round_idx,
+                total_rounds=rounds,
+                schedule=beta_schedule,
+                min_beta=beta_min,
+            )
             round_lr = self._learning_rate_for_round(
                 base_lr,
                 round_idx=round_idx,
@@ -318,6 +334,8 @@ class Trainer:
             try:
                 local_states = []
                 local_metrics = []
+                active_partner_weights = []
+                active_effective_betas = []
                 for client_id in selected:
                     client = clients[client_id]
                     pair_id = pairing.pair_map.get(client_id)
@@ -326,6 +344,17 @@ class Trainer:
                         # Define the pre-round-0 partner model as the common
                         # global initialization so FCPC is defined in round 1.
                         paired_previous = global_state
+                    partner_weight = 0.0
+                    effective_beta = 0.0
+                    if use_fcpc and pair_id is not None:
+                        partner_weight = self._partner_weight_for_pair(
+                            client.sample_count,
+                            clients[pair_id].sample_count,
+                            strategy=partner_weighting,
+                        )
+                        effective_beta = beta * partner_weight
+                        active_partner_weights.append(partner_weight)
+                        active_effective_betas.append(effective_beta)
                     local_model = build_model(
                         model_cfg.get("name", "simple_cnn"),
                         num_classes=num_classes,
@@ -337,7 +366,7 @@ class Trainer:
                         global_state,
                         paired_previous_state=paired_previous,
                         use_fcpc=use_fcpc,
-                        beta=beta,
+                        beta=effective_beta,
                         lr=round_lr,
                         optimizer_name=optimizer_name,
                         momentum=momentum,
@@ -396,7 +425,19 @@ class Trainer:
                     "algorithm": algorithm.name,
                     "fcpc": use_fcpc,
                     "alpha": partition_cfg.get("alpha", ""),
+                    "beta_base": beta_base,
                     "beta": beta,
+                    "beta_schedule": beta_schedule,
+                    "beta_min": beta_min,
+                    "partner_weighting": partner_weighting,
+                    "mean_partner_weight": (
+                        float(np.mean(active_partner_weights))
+                        if active_partner_weights else 0.0
+                    ),
+                    "mean_effective_beta": (
+                        float(np.mean(active_effective_betas))
+                        if active_effective_betas else 0.0
+                    ),
                     "lambda_jsdn": fcpc_cfg.get("lambda_jsdn", ""),
                     "learning_rate": round_lr,
                     "train_clients": len(selected),
@@ -549,6 +590,48 @@ class Trainer:
             gamma = float(scheduler_cfg.get("gamma", 0.1))
             return float(base_lr) * gamma ** (round_idx // step_size)
         raise ValueError(f"unsupported scheduler: {name}")
+
+    @staticmethod
+    def _beta_for_round(
+        base_beta: float,
+        round_idx: int,
+        total_rounds: int,
+        schedule: str = "constant",
+        min_beta: float = 0.0,
+    ) -> float:
+        """Resolve the round-specific FCPC coefficient beta_t."""
+        base_beta = float(base_beta)
+        min_beta = float(min_beta)
+        if base_beta < 0.0 or min_beta < 0.0:
+            raise ValueError("FCPC beta values must be nonnegative")
+        name = str(schedule).lower()
+        if name in {"constant", "none"}:
+            return base_beta
+        if name in {"cosine", "cosine_decay"}:
+            if min_beta > base_beta:
+                raise ValueError("min_beta cannot exceed the initial beta")
+            progress = round_idx / max(total_rounds - 1, 1)
+            return min_beta + 0.5 * (base_beta - min_beta) * (
+                1.0 + cos(pi * progress)
+            )
+        raise ValueError(f"unsupported FCPC beta schedule: {schedule}")
+
+    @staticmethod
+    def _partner_weight_for_pair(
+        client_sample_count: int,
+        partner_sample_count: int,
+        strategy: str = "uniform",
+    ) -> float:
+        """Allocate beta by partner reliability; sample_ratio intentionally has no factor 2."""
+        name = str(strategy).lower()
+        if name in {"uniform", "none"}:
+            return 1.0
+        if name == "sample_ratio":
+            client_count = max(int(client_sample_count), 0)
+            partner_count = max(int(partner_sample_count), 0)
+            denominator = client_count + partner_count
+            return float(partner_count / denominator) if denominator else 0.0
+        raise ValueError(f"unsupported FCPC partner weighting: {strategy}")
 
     @staticmethod
     def _select_device(requested: str) -> str:
