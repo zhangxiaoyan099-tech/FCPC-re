@@ -557,3 +557,32 @@ mean_effective_beta
 ```
 
 其中 `beta` 是当轮的 beta_t，`mean_effective_beta` 是当轮所有已配对客户端实际使用的 beta_t × partner_weight 的均值。该均值只用于实验审计，不作为新的理论量。
+
+## 12. 样本比例乘 2 与余弦 beta 的组合消融
+
+为避免预设乘 2 一定有效，将其作为显式实验组件 `sample_ratio_x2`：
+
+\[
+r_{i\leftarrow j}^{x2}=\frac{2N_j}{N_i+N_j}.
+\]
+
+在完全相同的余弦 beta 日程下比较：
+
+1. `uniform + cosine`：现有基准；
+2. `sample_ratio(no x2) + cosine`：非对称分配，同时降低系数总尺度；
+3. `sample_ratio_x2 + cosine`：非对称分配，但保持一对客户端两个方向的系数和与 uniform 相同。
+
+新增配置：
+
+```text
+cifar10_dual_a0p1_fcpc_sample_ratio_nox2_beta_cosine0p01_to0_r50.yaml
+cifar10_dual_a0p1_fcpc_sample_ratio_x2_beta_cosine0p01_to0_r50.yaml
+```
+
+三者两两比较的含义是：
+
+- `x2 cosine` 对 `uniform cosine`：相同成对系数总尺度下，非对称分配是否有用；
+- `x2 cosine` 对 `no-x2 cosine`：将有效正则整体放大两倍的影响；
+- `no-x2 cosine` 对 `uniform cosine`：非对称分配与整体减弱共同产生的效果。
+
+这一实验只验证经验效果，不把乘 2 作为理论结论。

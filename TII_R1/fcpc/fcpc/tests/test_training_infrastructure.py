@@ -114,6 +114,13 @@ class FCPCPartnerWeightTests(unittest.TestCase):
         self.assertAlmostEqual(large_from_small, 0.1)
         self.assertAlmostEqual(small_from_large + large_from_small, 1.0)
 
+    def test_sample_ratio_x2_is_an_explicit_ablation(self) -> None:
+        small_from_large = Trainer._partner_weight_for_pair(100, 900, "sample_ratio_x2")
+        large_from_small = Trainer._partner_weight_for_pair(900, 100, "sample_ratio_x2")
+        self.assertAlmostEqual(small_from_large, 1.8)
+        self.assertAlmostEqual(large_from_small, 0.2)
+        self.assertAlmostEqual(small_from_large + large_from_small, 2.0)
+
 
 if __name__ == "__main__":
     unittest.main()

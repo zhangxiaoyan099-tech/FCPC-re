@@ -622,15 +622,18 @@ class Trainer:
         partner_sample_count: int,
         strategy: str = "uniform",
     ) -> float:
-        """Allocate beta by partner reliability; sample_ratio intentionally has no factor 2."""
+        """Allocate beta by partner reliability with explicit x1/x2 ablations."""
         name = str(strategy).lower()
         if name in {"uniform", "none"}:
             return 1.0
-        if name == "sample_ratio":
+        if name in {"sample_ratio", "sample_ratio_x2"}:
             client_count = max(int(client_sample_count), 0)
             partner_count = max(int(partner_sample_count), 0)
             denominator = client_count + partner_count
-            return float(partner_count / denominator) if denominator else 0.0
+            if not denominator:
+                return 0.0
+            scale = 2.0 if name == "sample_ratio_x2" else 1.0
+            return float(scale * partner_count / denominator)
         raise ValueError(f"unsupported FCPC partner weighting: {strategy}")
 
     @staticmethod
