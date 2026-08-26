@@ -586,3 +586,24 @@ cifar10_dual_a0p1_fcpc_sample_ratio_x2_beta_cosine0p01_to0_r50.yaml
 - `no-x2 cosine` 对 `uniform cosine`：非对称分配与整体减弱共同产生的效果。
 
 这一实验只验证经验效果，不把乘 2 作为理论结论。
+
+## 13. 等尺度余弦对照：uniform 0.005 到 0
+
+为判断 `sample_ratio + cosine(0.01 到 0)` 的提升来自样本量非对称分配，还是仅仅来自更弱的有效 beta，新增：
+
+```text
+cifar10_dual_a0p1_fcpc_uniform_beta_cosine0p005_to0_r50.yaml
+```
+
+它与当前最佳候选保持相同的数据、随机种子、模型、优化器、LDP-JSDN配对和50轮余弦日程，只把配置改为：
+
+```json
+"beta": 0.005,
+"beta_schedule": "cosine_decay",
+"min_beta": 0.0,
+"partner_weighting": "uniform"
+```
+
+对于任意一对客户端，`sample_ratio + beta=0.01` 两个方向的系数和为 0.01；`uniform + beta=0.005` 两个方向的系数和也为 0.01。余弦乘子在每一轮相同，因此这是系数总尺度相匹配、分配方式不同的对照。
+
+主要比较最佳验证轮对应的测试准确率，并同时报告最佳轮、尾10轮验证均值和最后模型测试准确率。单种子仅用于机制筛选，若差异较小或候选胜出，随后再进行多随机种子验证。
