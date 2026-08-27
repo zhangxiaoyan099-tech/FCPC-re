@@ -27,6 +27,9 @@ class AlgorithmAdapter:
     def extra_loss(self, model, batch, task_loss, context: Mapping[str, object]):
         return _zero_like(task_loss)
 
+    def after_backward(self, model, **_context):
+        """Optionally transform gradients before the optimizer step."""
+
     def after_local_train(self, **_context):
         """Update per-client algorithm state after local optimization."""
 

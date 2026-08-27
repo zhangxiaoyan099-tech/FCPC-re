@@ -410,6 +410,10 @@ class Trainer:
                         mean_sample_count=mean_sample_count,
                         return_metrics=True,
                     )
+                    self._assert_finite_state(
+                        state,
+                        where=f"round {round_idx + 1}, client {client_id}",
+                    )
                     local_states.append(state)
                     local_metrics.append(metrics)
                 default_global_state = server.aggregate(selected, local_states)
@@ -424,6 +428,10 @@ class Trainer:
                     custom_global_state
                     if custom_global_state is not None
                     else default_global_state
+                )
+                self._assert_finite_state(
+                    global_state,
+                    where=f"round {round_idx + 1}, server aggregation",
                 )
                 algorithm.after_round(
                     round_idx=round_idx,
@@ -588,6 +596,23 @@ class Trainer:
         }
 
     @staticmethod
+    def _assert_finite_state(state, where: str):
+        """Fail at the first non-finite model tensor with useful context."""
+        import torch
+
+        invalid = [
+            name
+            for name, value in state.items()
+            if value.is_floating_point() and not bool(torch.isfinite(value).all())
+        ]
+        if invalid:
+            preview = ", ".join(invalid[:5])
+            suffix = " ..." if len(invalid) > 5 else ""
+            raise FloatingPointError(
+                f"non-finite model state after {where}: {preview}{suffix}"
+            )
+
+    @staticmethod
     def _build_global_mean_pool(clients, num_classes: int, mean_batch_size: int):
         """Build FedCFA's server pool from client-side batch summaries.
 
@@ -655,6 +680,10 @@ class Trainer:
                 x = x.to(device)
                 y = y.to(device)
                 logits = model(x)
+                if not bool(torch.isfinite(logits).all()):
+                    raise FloatingPointError(
+                        f"non-finite logits during evaluation batch {batch_idx}"
+                    )
                 total_loss += float(criterion(logits, y).item())
                 total_correct += int((logits.argmax(dim=1) == y).sum().item())
                 total_samples += int(y.numel())

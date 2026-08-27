@@ -13,6 +13,7 @@ class FedDynAdapter(AlgorithmAdapter):
     name: str = "feddyn"
     alpha: float = 0.01
     adaptive_alpha: bool = True
+    max_grad_norm: float = 10.0
     _client_history: dict[int, dict[str, object]] = field(
         default_factory=dict,
         init=False,
@@ -22,6 +23,7 @@ class FedDynAdapter(AlgorithmAdapter):
     _active_alpha: float = field(default=0.01, init=False, repr=False)
     _global_state: Mapping[str, object] | None = field(default=None, init=False, repr=False)
     _num_clients: int = field(default=1, init=False, repr=False)
+    _parameter_names: set[str] = field(default_factory=set, init=False, repr=False)
 
     def begin_round(self, clients=None, **_context):
         if clients is not None:
@@ -29,6 +31,7 @@ class FedDynAdapter(AlgorithmAdapter):
 
     def begin_local_train(
         self,
+        model,
         client_id,
         global_state,
         sample_count=1,
@@ -37,6 +40,7 @@ class FedDynAdapter(AlgorithmAdapter):
     ):
         self._active_client_id = int(client_id)
         self._global_state = global_state
+        self._parameter_names = {name for name, _ in model.named_parameters()}
         scale = float(mean_sample_count) / max(float(sample_count), 1.0)
         self._active_alpha = float(self.alpha) * (scale if self.adaptive_alpha else 1.0)
 
@@ -59,9 +63,25 @@ class FedDynAdapter(AlgorithmAdapter):
             return _zero_like(task_loss)
         return self._active_alpha * total
 
+    def after_backward(self, model, **_context):
+        # The official FedDyn optimizer clips every mini-batch gradient to 10.
+        # This is essential when adaptive alpha is large for small clients.
+        import torch
+
+        return torch.nn.utils.clip_grad_norm_(
+            model.parameters(),
+            max_norm=float(self.max_grad_norm),
+        )
+
     def after_local_train(self, client_id, local_state, global_state, **_context):
         history = self._client_history.setdefault(int(client_id), {})
         for name, local_value in local_state.items():
+            # FedDyn's dual/history variable is defined only for optimized
+            # model parameters. BatchNorm running statistics and other state
+            # buffers must follow ordinary aggregation; correcting them with
+            # parameter history can make running_var negative and cause NaNs.
+            if name not in self._parameter_names:
+                continue
             global_value = global_state.get(name)
             if global_value is None or not local_value.is_floating_point():
                 continue
@@ -79,7 +99,7 @@ class FedDynAdapter(AlgorithmAdapter):
         result = {}
         client_count = self._num_clients
         for name, default_value in default_state.items():
-            if not default_value.is_floating_point():
+            if name not in self._parameter_names or not default_value.is_floating_point():
                 result[name] = default_value.detach().cpu().clone()
                 continue
             selected_mean = torch.stack(

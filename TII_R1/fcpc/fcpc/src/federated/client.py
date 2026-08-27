@@ -101,6 +101,11 @@ class Client:
                     fcpc_weighted_loss = float(beta) * fcpc_raw_loss
                     loss = task_loss + algorithm_loss + fcpc_weighted_loss
                     loss.backward()
+                    algorithm.after_backward(
+                        model=model,
+                        client_id=self.client_id,
+                        batch=(x, y),
+                    )
                     optimizer.step()
 
                     batch_examples = int(y.numel())

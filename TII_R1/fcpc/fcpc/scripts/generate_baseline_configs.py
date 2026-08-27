@@ -13,7 +13,11 @@ ALGORITHMS = {
     "fedavg": {},
     "fedprox": {"mu": 0.01},
     "moon": {"mu": 1.0, "temperature": 0.5},
-    "feddyn": {"alpha": 0.01, "adaptive_alpha": True},
+    "feddyn": {
+        "alpha": 0.01,
+        "adaptive_alpha": True,
+        "max_grad_norm": 10.0,
+    },
     "fblg": {
         "candidate_ratio": 0.5,
         "epsilon": 0.01,

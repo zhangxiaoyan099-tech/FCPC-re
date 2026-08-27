@@ -52,6 +52,7 @@ if nn is not None:
     class TinyModel(nn.Module):
         def __init__(self):
             super().__init__()
+            self.register_buffer("running_stat", torch.ones(3))
             self.features = nn.Linear(4, 3)
             self.classifier = nn.Linear(3, 2)
 
@@ -106,14 +107,33 @@ class BaselineGradientTests(unittest.TestCase):
         local_state = {key: value.detach().clone() + 0.1 for key, value in model.state_dict().items()}
         adapter = build_algorithm("feddyn", alpha=0.01)
         adapter.begin_round(clients=[object(), object()])
+        adapter.begin_local_train(
+            model=model,
+            client_id=0,
+            global_state=global_state,
+            sample_count=1,
+            mean_sample_count=1.0,
+        )
         adapter.after_local_train(client_id=0, local_state=local_state, global_state=global_state)
         result = adapter.aggregate(
             selected_client_ids=[0],
             client_states=[local_state],
             default_state=local_state,
         )
-        first_float = next(key for key, value in local_state.items() if value.is_floating_point())
-        self.assertFalse(torch.equal(result[first_float], local_state[first_float]))
+        self.assertFalse(torch.equal(result["features.weight"], local_state["features.weight"]))
+        self.assertNotIn("running_stat", adapter._client_history[0])
+        self.assertTrue(torch.equal(result["running_stat"], local_state["running_stat"]))
+
+    def test_feddyn_clips_gradients_to_configured_norm(self):
+        model = TinyModel()
+        for parameter in model.parameters():
+            parameter.grad = torch.full_like(parameter, 1000.0)
+        adapter = build_algorithm("feddyn", max_grad_norm=2.0)
+        adapter.after_backward(model)
+        norm = torch.sqrt(
+            sum((parameter.grad * parameter.grad).sum() for parameter in model.parameters())
+        )
+        self.assertLessEqual(float(norm), 2.0001)
 
 
 if __name__ == "__main__":
