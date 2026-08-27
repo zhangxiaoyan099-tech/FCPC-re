@@ -84,7 +84,21 @@ class BaselineGradientTests(unittest.TestCase):
         task = nn.CrossEntropyLoss()(logits, targets)
         loss = adapter.extra_loss(model, (inputs, targets), task, context)
         loss.backward()
-        self.assertGreater(sum(parameter.grad.abs().sum().item() for parameter in model.parameters()), 0.0)
+        gradients = [
+            parameter.grad
+            for parameter in model.parameters()
+            if parameter.grad is not None
+        ]
+        self.assertTrue(gradients)
+        self.assertGreater(
+            sum(gradient.abs().sum().item() for gradient in gradients),
+            0.0,
+        )
+        # MOON's contrastive term is defined on the representation z.  When
+        # tested without the classification loss, the classifier is expected
+        # to have no gradient while the representation extractor must have one.
+        self.assertIsNotNone(model.features.weight.grad)
+        self.assertIsNone(model.classifier.weight.grad)
 
     def test_feddyn_history_changes_custom_aggregation(self):
         model = TinyModel()
