@@ -29,11 +29,23 @@ if nn is not None:
             )
 
         def forward(self, x):
-            return self.classifier(self.features(x))
+            return self.fedcfa_decode(self.fedcfa_encode(x))
+
+        def fedcfa_encode(self, x):
+            return self.features(x)
+
+        def fedcfa_decode(self, latent):
+            return self.classifier(latent)
+
+        def forward_with_representation(self, x):
+            latent = self.fedcfa_encode(x)
+            hidden = self.classifier[0](latent)
+            hidden = self.classifier[1](hidden)
+            hidden = self.classifier[2](hidden)
+            return self.classifier[3](hidden), hidden
 
 else:
 
     class SimpleCNN:  # type: ignore[no-redef]
         def __init__(self, *_args, **_kwargs):
             raise ImportError("PyTorch is required to instantiate SimpleCNN")
-

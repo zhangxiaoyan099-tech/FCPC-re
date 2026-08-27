@@ -1,7 +1,10 @@
 from .base import AlgorithmAdapter
+from .fedcfa import FedCFAAdapter
+from .feddyn import FedDynAdapter
 from .fedavg import FedAvgAdapter
+from .fblg import FBLGAdapter
 from .fedprox import FedProxAdapter
-from .stubs import FedCFAAdapter, FedDynAdapter, FBLGAdapter, MOONAdapter
+from .moon import MOONAdapter
 
 
 def build_algorithm(name: str, **kwargs) -> AlgorithmAdapter:

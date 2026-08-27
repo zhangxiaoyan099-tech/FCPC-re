@@ -1,0 +1,66 @@
+{
+  "seed": 42,
+  "dataset": {
+    "name": "synthetic",
+    "num_classes": 10,
+    "input_channels": 1,
+    "image_size": 28,
+    "train_samples": 160,
+    "test_samples": 40
+  },
+  "model": {
+    "name": "simple_cnn"
+  },
+  "federated": {
+    "num_clients": 4,
+    "clients_per_round": 2,
+    "rounds": 2,
+    "local_epochs": 1,
+    "batch_size": 8,
+    "num_workers": 0,
+    "max_batches_per_client": 1,
+    "max_eval_batches": 1,
+    "aggregation": "weighted",
+    "device": "cpu"
+  },
+  "partition": {
+    "mode": "dual_skew",
+    "alpha": 0.1
+  },
+  "algorithm": {
+    "name": "fedcfa",
+    "topk": 24,
+    "rates": "1:5:5",
+    "mean_batch_size": 128
+  },
+  "fcpc": {
+    "enabled": false,
+    "lambda_jsdn": 0.3,
+    "beta": 0.0,
+    "epsilon": 1.0,
+    "pairing_strategy": "fair_greedy_dissimilar"
+  },
+  "optimizer": {
+    "name": "sgd",
+    "lr": 0.03,
+    "momentum": 0.9,
+    "weight_decay": 0.0005,
+    "nesterov": false
+  },
+  "scheduler": {
+    "name": "constant"
+  },
+  "evaluation": {
+    "validation_fraction": 0.1,
+    "validation_seed": 10042,
+    "test_every_round": false
+  },
+  "profiling": {
+    "sample_interval_s": 0.2
+  },
+  "logging": {
+    "output_dir": "outputs/baseline_smoke",
+    "checkpoint_dir": "outputs/baseline_smoke",
+    "run_name": "smoke_fedcfa_cpr2_r2"
+  }
+}

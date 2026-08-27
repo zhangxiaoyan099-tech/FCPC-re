@@ -187,7 +187,14 @@ class Trainer:
         model.to(device)
         global_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
         algorithm_kwargs = {k: v for k, v in algorithm_cfg.items() if k != "name"}
+        if str(algorithm_cfg.get("name", "fedavg")).lower() == "fedcfa":
+            algorithm_kwargs.setdefault("num_classes", num_classes)
         algorithm = build_algorithm(algorithm_cfg.get("name", "fedavg"), **algorithm_kwargs)
+        model_factory = lambda: build_model(
+            model_cfg.get("name", "simple_cnn"),
+            num_classes=num_classes,
+            input_channels=input_channels,
+        )
         server = Server(
             clients=clients,
             lambda_jsdn=float(fcpc_cfg.get("lambda_jsdn", 0.3)),
@@ -266,6 +273,15 @@ class Trainer:
             shuffle=False,
             num_workers=num_workers,
         )
+        reference_inputs = None
+        if validation_loader is not None:
+            try:
+                reference_inputs = next(iter(validation_loader))[0].detach().cpu()
+            except StopIteration:
+                reference_inputs = None
+
+        global_mean_x = None
+        global_mean_y = None
         rounds = int(federated.get("rounds", 100))
         clients_per_round = int(federated.get("clients_per_round", num_clients))
         local_epochs = int(federated.get("local_epochs", 1))
@@ -299,6 +315,7 @@ class Trainer:
         best_global_state = None
         final_test_metrics = {"test_loss": None, "test_acc": None}
         final_val_metrics = {"test_loss": None, "test_acc": None}
+        mean_sample_count = float(np.mean([client.sample_count for client in clients]))
         for round_idx in range(rounds):
             round_started = perf_counter()
             beta = self._beta_for_round(
@@ -314,7 +331,22 @@ class Trainer:
                 total_rounds=rounds,
                 scheduler_cfg=scheduler_cfg,
             )
-            selected = server.sample_clients(clients_per_round, seed + round_idx)
+            algorithm.begin_round(
+                round_idx=round_idx,
+                global_state=global_state,
+                clients=clients,
+                global_mean_x=global_mean_x,
+                global_mean_y=global_mean_y,
+            )
+            selected = algorithm.select_clients(
+                server,
+                clients_per_round,
+                seed + round_idx,
+                global_state=global_state,
+                model_factory=model_factory,
+                device=device,
+                max_batches=max_batches,
+            )
             pairing_started = perf_counter()
             pairing = server.pair_selected(
                 selected,
@@ -375,11 +407,44 @@ class Trainer:
                         local_epochs=local_epochs,
                         device=device,
                         max_batches=max_batches,
+                        mean_sample_count=mean_sample_count,
                         return_metrics=True,
                     )
                     local_states.append(state)
                     local_metrics.append(metrics)
-                global_state = server.aggregate(selected, local_states)
+                default_global_state = server.aggregate(selected, local_states)
+                custom_global_state = algorithm.aggregate(
+                    selected_client_ids=selected,
+                    client_states=local_states,
+                    default_state=default_global_state,
+                    previous_global_state=global_state,
+                    clients=clients,
+                )
+                global_state = (
+                    custom_global_state
+                    if custom_global_state is not None
+                    else default_global_state
+                )
+                algorithm.after_round(
+                    round_idx=round_idx,
+                    selected_client_ids=selected,
+                    client_states=local_states,
+                    local_metrics=local_metrics,
+                    global_state=global_state,
+                    model_factory=model_factory,
+                    reference_inputs=reference_inputs,
+                    device=device,
+                    clients=clients,
+                    num_classes=num_classes,
+                )
+                if algorithm.name == "fedcfa":
+                    global_mean_x, global_mean_y = self._build_global_mean_pool(
+                        [clients[client_id] for client_id in selected],
+                        num_classes=num_classes,
+                        mean_batch_size=int(
+                            getattr(algorithm, "mean_batch_size", batch_size)
+                        ),
+                    )
                 model.load_state_dict(global_state)
                 round_train_metrics = self._aggregate_local_metrics(local_metrics)
                 if validation_loader is not None:
@@ -521,6 +586,57 @@ class Trainer:
             "last_test_loss": last_test_metrics["test_loss"],
             "last_test_acc": last_test_metrics["test_acc"],
         }
+
+    @staticmethod
+    def _build_global_mean_pool(clients, num_classes: int, mean_batch_size: int):
+        """Build FedCFA's server pool from client-side batch summaries.
+
+        Each stored item is an average input and an average one-hot label for
+        one local mini-batch.  Raw client examples are not retained by this
+        helper, matching the released FedCFA code's mean-data interface.
+        """
+        import torch
+        import torch.nn.functional as F
+
+        mean_batch_size = max(int(mean_batch_size), 1)
+        mean_inputs = []
+        mean_labels = []
+        for client in clients:
+            buffered_inputs = []
+            buffered_labels = []
+            buffered_count = 0
+            for inputs, targets in client.train_loader:
+                offset = 0
+                while offset < len(targets):
+                    take = min(mean_batch_size - buffered_count, len(targets) - offset)
+                    buffered_inputs.append(inputs[offset : offset + take].detach().cpu())
+                    buffered_labels.append(targets[offset : offset + take].detach().cpu())
+                    buffered_count += take
+                    offset += take
+                    if buffered_count == mean_batch_size:
+                        group_inputs = torch.cat(buffered_inputs, dim=0)
+                        group_targets = torch.cat(buffered_labels, dim=0)
+                        mean_inputs.append(group_inputs.float().mean(dim=0))
+                        mean_labels.append(
+                            F.one_hot(group_targets.long(), num_classes=num_classes)
+                            .float()
+                            .mean(dim=0)
+                        )
+                        buffered_inputs = []
+                        buffered_labels = []
+                        buffered_count = 0
+            if buffered_count:
+                group_inputs = torch.cat(buffered_inputs, dim=0)
+                group_targets = torch.cat(buffered_labels, dim=0)
+                mean_inputs.append(group_inputs.float().mean(dim=0))
+                mean_labels.append(
+                    F.one_hot(group_targets.long(), num_classes=num_classes)
+                    .float()
+                    .mean(dim=0)
+                )
+        if not mean_inputs:
+            raise ValueError("FedCFA requires at least one non-empty client")
+        return torch.stack(mean_inputs), torch.stack(mean_labels)
 
     def evaluate(self, model, data_loader, device: str, max_batches: int | None = None) -> Dict[str, float]:
         import torch

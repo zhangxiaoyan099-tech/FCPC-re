@@ -20,7 +20,17 @@ def _build_sensor_cnn(num_classes: int, input_channels: int):
             self.classifier = nn.Linear(64, num_classes)
 
         def forward(self, x):
-            return self.classifier(self.features(x).squeeze(-1))
+            return self.fedcfa_decode(self.fedcfa_encode(x))
+
+        def fedcfa_encode(self, x):
+            return self.features(x)
+
+        def fedcfa_decode(self, latent):
+            return self.classifier(latent.squeeze(-1))
+
+        def forward_with_representation(self, x):
+            representation = self.fedcfa_encode(x).squeeze(-1)
+            return self.classifier(representation), representation
 
     return SensorCNN()
 

@@ -32,6 +32,7 @@ class Client:
         local_epochs: int = 1,
         device: str = "cpu",
         max_batches: int | None = None,
+        mean_sample_count: float = 1.0,
         return_metrics: bool = False,
     ):
         """Run local training. Requires PyTorch and a DataLoader."""
@@ -53,6 +54,15 @@ class Client:
             nesterov=nesterov,
         )
         criterion = nn.CrossEntropyLoss()
+        algorithm.begin_local_train(
+            model=model,
+            client_id=self.client_id,
+            global_state=global_state,
+            previous_local_state=self.previous_state,
+            sample_count=self.sample_count,
+            mean_sample_count=mean_sample_count,
+            device=device,
+        )
 
         metric_sums = {
             "task_loss": 0.0,
@@ -64,46 +74,59 @@ class Client:
         processed_examples = 0
         processed_batches = 0
 
-        for _ in range(local_epochs):
-            for batch_idx, (x, y) in enumerate(self.train_loader):
-                if max_batches is not None and batch_idx >= max_batches:
-                    break
-                x = x.to(device)
-                y = y.to(device)
-                optimizer.zero_grad(set_to_none=True)
-                logits = model(x)
-                task_loss = criterion(logits, y)
-                context = {
-                    "global_state": global_state,
-                    "current_logits": logits,
-                }
-                algorithm_loss = algorithm.extra_loss(model, (x, y), task_loss, context)
-                fcpc_raw_loss = task_loss.new_tensor(0.0)
-                if use_fcpc and paired_previous_state is not None:
-                    fcpc_raw_loss = fcpc_regularization(
-                        dict(model.named_parameters()),
-                        paired_previous_state,
-                        beta=1.0,
-                    )
-                fcpc_weighted_loss = float(beta) * fcpc_raw_loss
-                loss = task_loss + algorithm_loss + fcpc_weighted_loss
-                loss.backward()
-                optimizer.step()
+        try:
+            for _ in range(local_epochs):
+                for batch_idx, (x, y) in enumerate(self.train_loader):
+                    if max_batches is not None and batch_idx >= max_batches:
+                        break
+                    x = x.to(device)
+                    y = y.to(device)
+                    optimizer.zero_grad(set_to_none=True)
+                    logits, forward_context = algorithm.forward(model, x)
+                    task_loss = criterion(logits, y)
+                    context = {
+                        "client_id": self.client_id,
+                        "global_state": global_state,
+                        "current_logits": logits,
+                        **forward_context,
+                    }
+                    algorithm_loss = algorithm.extra_loss(model, (x, y), task_loss, context)
+                    fcpc_raw_loss = task_loss.new_tensor(0.0)
+                    if use_fcpc and paired_previous_state is not None:
+                        fcpc_raw_loss = fcpc_regularization(
+                            dict(model.named_parameters()),
+                            paired_previous_state,
+                            beta=1.0,
+                        )
+                    fcpc_weighted_loss = float(beta) * fcpc_raw_loss
+                    loss = task_loss + algorithm_loss + fcpc_weighted_loss
+                    loss.backward()
+                    optimizer.step()
 
-                batch_examples = int(y.numel())
-                processed_examples += batch_examples
-                processed_batches += 1
-                values = {
-                    "task_loss": task_loss,
-                    "algorithm_loss": algorithm_loss,
-                    "fcpc_raw_loss": fcpc_raw_loss,
-                    "fcpc_weighted_loss": fcpc_weighted_loss,
-                    "total_loss": loss,
-                }
-                for name, value in values.items():
-                    metric_sums[name] += float(value.detach().item()) * batch_examples
+                    batch_examples = int(y.numel())
+                    processed_examples += batch_examples
+                    processed_batches += 1
+                    values = {
+                        "task_loss": task_loss,
+                        "algorithm_loss": algorithm_loss,
+                        "fcpc_raw_loss": fcpc_raw_loss,
+                        "fcpc_weighted_loss": fcpc_weighted_loss,
+                        "total_loss": loss,
+                    }
+                    for name, value in values.items():
+                        metric_sums[name] += float(value.detach().item()) * batch_examples
 
-        self.previous_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+            self.previous_state = {
+                k: v.detach().cpu().clone() for k, v in model.state_dict().items()
+            }
+            algorithm.after_local_train(
+                client_id=self.client_id,
+                local_state=self.previous_state,
+                global_state=global_state,
+                sample_count=self.sample_count,
+            )
+        finally:
+            algorithm.end_local_train()
         if not return_metrics:
             return self.previous_state
 
