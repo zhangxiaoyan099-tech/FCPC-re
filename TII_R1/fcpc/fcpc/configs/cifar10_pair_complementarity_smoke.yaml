@@ -1,0 +1,54 @@
+{
+  "seed": 42,
+  "dataset": {
+    "name": "cifar10",
+    "num_classes": 10,
+    "input_channels": 3,
+    "root": "./data",
+    "download": true,
+    "augment": false,
+    "normalize": true
+  },
+  "model": {
+    "name": "simple_cnn"
+  },
+  "federated": {
+    "num_clients": 4,
+    "clients_per_round": 4,
+    "rounds": 1,
+    "local_epochs": 1,
+    "batch_size": 32,
+    "max_batches_per_client": 1,
+    "max_eval_batches": 1,
+    "aggregation": "weighted",
+    "device": "auto"
+  },
+  "partition": {
+    "mode": "dual_skew",
+    "alpha": 0.1,
+    "quantity_skew": true
+  },
+  "algorithm": {
+    "name": "fedavg"
+  },
+  "fcpc": {
+    "enabled": true,
+    "metric": "pair_complementarity",
+    "reference_strategy": "pair_center",
+    "beta": 0.2,
+    "epsilon": 1.0,
+    "pairing_strategy": "optimal"
+  },
+  "optimizer": {
+    "name": "sgd",
+    "lr": 0.01
+  },
+  "evaluation": {
+    "test_every_round": true
+  },
+  "logging": {
+    "output_dir": "outputs/cifar10_smoke",
+    "checkpoint_dir": "outputs/cifar10_smoke",
+    "run_name": "cifar10_pair_complementarity_smoke"
+  }
+}

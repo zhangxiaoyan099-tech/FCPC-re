@@ -5,7 +5,7 @@ from typing import Dict, List
 
 import numpy as np
 
-from src.fcpc.jsdn import build_jsdn_matrix
+from src.fcpc.jsdn import metric_matrix
 from src.fcpc.ldp import PrivacyBudget, perturb_client_metadata
 from src.fcpc.pairing import PairingResult, pair_clients
 from src.federated.aggregation import fedavg_aggregate
@@ -15,6 +15,7 @@ from src.federated.aggregation import fedavg_aggregate
 class Server:
     clients: list
     lambda_jsdn: float = 0.3
+    pairing_metric: str = "jsdn"
     aggregation_weighted: bool = True
     pairing_result: PairingResult | None = field(default=None, init=False)
     pairing_matrix: np.ndarray | None = field(default=None, init=False)
@@ -40,7 +41,8 @@ class Server:
             )
             label_distributions.append(perturbed_hist)
             sample_counts.append(perturbed_count)
-        self.pairing_matrix = build_jsdn_matrix(
+        self.pairing_matrix = metric_matrix(
+            self.pairing_metric,
             label_distributions,
             sample_counts,
             lambda_jsdn=self.lambda_jsdn,

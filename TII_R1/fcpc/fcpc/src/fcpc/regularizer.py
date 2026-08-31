@@ -11,6 +11,45 @@ from __future__ import annotations
 from typing import Mapping
 
 
+def weighted_state_center(
+    state_a: Mapping[str, object] | None,
+    state_b: Mapping[str, object] | None,
+    count_a: float,
+    count_b: float,
+    fallback_state: Mapping[str, object],
+) -> dict[str, object]:
+    """Return the frozen sample-weighted model center of a client pair.
+
+    Missing pre-round states use the common global model.  Floating tensors
+    are averaged with ``theta = Na/(Na+Nb)``; non-floating buffers are cloned
+    from the first compatible state because they never enter the parameter
+    regularizer.
+    """
+    left = fallback_state if state_a is None else state_a
+    right = fallback_state if state_b is None else state_b
+    count_a = max(float(count_a), 0.0)
+    count_b = max(float(count_b), 0.0)
+    denominator = count_a + count_b
+    theta = 0.5 if denominator <= 0.0 else count_a / denominator
+    center: dict[str, object] = {}
+    for name, fallback_value in fallback_state.items():
+        value_a = left.get(name, fallback_value)
+        value_b = right.get(name, fallback_value)
+        if (
+            hasattr(value_a, "shape")
+            and hasattr(value_b, "shape")
+            and tuple(value_a.shape) == tuple(value_b.shape)
+            and hasattr(value_a, "is_floating_point")
+            and value_a.is_floating_point()
+        ):
+            center[name] = (theta * value_a + (1.0 - theta) * value_b).detach().cpu().clone()
+        elif hasattr(value_a, "detach"):
+            center[name] = value_a.detach().cpu().clone()
+        else:
+            center[name] = value_a
+    return center
+
+
 def fcpc_regularization(
     current_parameters: Mapping[str, object],
     paired_previous_state: Mapping[str, object] | None,

@@ -16,8 +16,9 @@ from src.data.partition import (
     natural_client_partition,
 )
 from src.data.split import stratified_holdout_indices
-from src.fcpc.jsdn import build_jsdn_matrix
-from src.fcpc.pairing import greedy_high_dissimilarity_pairing
+from src.fcpc.jsdn import metric_matrix
+from src.fcpc.pairing import pair_clients
+from src.fcpc.regularizer import weighted_state_center
 from src.federated.client import Client
 from src.federated.server import Server
 from src.models import build_model
@@ -43,8 +44,20 @@ class Trainer:
         rng = np.random.default_rng(int(self.config.get("seed", 42)))
         mock_hists = rng.dirichlet(np.ones(num_classes), size=num_clients)
         mock_counts = rng.integers(20, 200, size=num_clients)
-        matrix = build_jsdn_matrix(mock_hists, mock_counts, lambda_jsdn=float(fcpc_cfg.get("lambda_jsdn", 0.3)))
-        pairing = greedy_high_dissimilarity_pairing(matrix)
+        pairing_metric = str(fcpc_cfg.get("metric", "jsdn"))
+        matrix = metric_matrix(
+            pairing_metric,
+            mock_hists,
+            mock_counts,
+            lambda_jsdn=float(fcpc_cfg.get("lambda_jsdn", 0.3)),
+        )
+        pairing_strategy = str(fcpc_cfg.get("pairing_strategy", "greedy_dissimilar"))
+        dry_strategy = (
+            "greedy_dissimilar"
+            if pairing_strategy.lower() == "fair_greedy_dissimilar"
+            else pairing_strategy
+        )
+        pairing = pair_clients(matrix, strategy=dry_strategy, seed=int(self.config.get("seed", 42)))
         algorithm = build_algorithm(self.config.get("algorithm", {}).get("name", "fedavg"))
 
         torch_available = True
@@ -65,6 +78,10 @@ class Trainer:
             "algorithm": algorithm.name,
             "pair_count": len(pairing.pairs),
             "unpaired": pairing.unpaired,
+            "pairing_metric": pairing_metric,
+            "pairing_strategy": pairing_strategy,
+            "reference_strategy": str(fcpc_cfg.get("reference_strategy", "partner")),
+            "pairing_matrix_shape": tuple(matrix.shape),
             "jsdn_shape": tuple(matrix.shape),
             "model": model_name,
             "torch_available": torch_available,
@@ -198,11 +215,19 @@ class Trainer:
         server = Server(
             clients=clients,
             lambda_jsdn=float(fcpc_cfg.get("lambda_jsdn", 0.3)),
+            pairing_metric=str(fcpc_cfg.get("metric", "jsdn")),
             aggregation_weighted=str(federated.get("aggregation", "weighted")).lower() != "equal",
         )
         pairing_strategy = str(
             fcpc_cfg.get("pairing_strategy", "fair_greedy_dissimilar")
         )
+        reference_strategy = str(
+            fcpc_cfg.get("reference_strategy", "partner")
+        ).lower()
+        if reference_strategy not in {"partner", "pair_center"}:
+            raise ValueError(
+                "fcpc.reference_strategy must be 'partner' or 'pair_center'"
+            )
         server.build_pairing(
             epsilon=float(fcpc_cfg.get("epsilon", 1.0)),
             seed=seed,
@@ -218,6 +243,8 @@ class Trainer:
                 "dataset",
                 "algorithm",
                 "fcpc",
+                "pairing_metric",
+                "reference_strategy",
                 "alpha",
                 "beta_base",
                 "beta",
@@ -362,6 +389,21 @@ class Trainer:
                 client_id: clients[client_id].previous_state
                 for client_id in selected
             }
+            reference_states = {}
+            if reference_strategy == "pair_center":
+                for client_a, client_b in pairing.pairs:
+                    center = weighted_state_center(
+                        previous_states.get(client_a),
+                        previous_states.get(client_b),
+                        clients[client_a].sample_count,
+                        clients[client_b].sample_count,
+                        fallback_state=global_state,
+                    )
+                    # Both clients are constrained to exactly the same frozen
+                    # pair center.  This is the model-space counterpart of the
+                    # sample-weighted label mixture used in the edge score.
+                    reference_states[client_a] = center
+                    reference_states[client_b] = center
             monitor = ResourceMonitor(device=device, interval_s=profile_interval_s).start()
             try:
                 local_states = []
@@ -371,7 +413,10 @@ class Trainer:
                 for client_id in selected:
                     client = clients[client_id]
                     pair_id = pairing.pair_map.get(client_id)
-                    paired_previous = previous_states.get(pair_id) if pair_id is not None else None
+                    if reference_strategy == "pair_center":
+                        paired_previous = reference_states.get(client_id)
+                    else:
+                        paired_previous = previous_states.get(pair_id) if pair_id is not None else None
                     if pair_id is not None and paired_previous is None:
                         # Define the pre-round-0 partner model as the common
                         # global initialization so FCPC is defined in round 1.
@@ -497,6 +542,8 @@ class Trainer:
                     "dataset": dataset_name,
                     "algorithm": algorithm.name,
                     "fcpc": use_fcpc,
+                    "pairing_metric": server.pairing_metric,
+                    "reference_strategy": reference_strategy,
                     "alpha": partition_cfg.get("alpha", ""),
                     "beta_base": beta_base,
                     "beta": beta,
