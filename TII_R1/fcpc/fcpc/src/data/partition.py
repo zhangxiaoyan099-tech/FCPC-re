@@ -43,19 +43,71 @@ def quantity_skew_resample(
     min_fraction: float = 0.25,
     seed: int = 42,
 ) -> Dict[int, List[int]]:
-    """Apply sample quantity skew by trimming each client with exponential weights."""
+    """Redistribute all supplied indices with unequal client quantities.
+
+    The previous implementation trimmed every client's existing subset and
+    silently discarded the remainder.  That made method comparisons use only
+    part of the CIFAR training split.  This implementation pools the indices
+    and repartitions them without replacement, so every input example appears
+    in exactly one output client.
+    """
     rng = np.random.default_rng(seed)
-    raw = rng.exponential(scale=1.0, size=len(client_indices))
-    raw = min_fraction + (1.0 - min_fraction) * raw / max(raw.max(), 1e-12)
-    skewed: Dict[int, List[int]] = {}
-    for client_id, indices in client_indices.items():
-        if not indices:
-            skewed[client_id] = []
-            continue
-        keep = max(1, int(len(indices) * raw[client_id]))
-        chosen = rng.choice(np.asarray(indices), size=min(keep, len(indices)), replace=False)
-        skewed[client_id] = chosen.tolist()
-    return skewed
+    client_ids = sorted(client_indices)
+    pooled = np.asarray(
+        [index for client_id in client_ids for index in client_indices[client_id]],
+        dtype=int,
+    )
+    if len(np.unique(pooled)) != len(pooled):
+        raise ValueError("client_indices must not contain duplicate sample indices")
+    rng.shuffle(pooled)
+    profile = _quantity_profile(len(client_ids), min_fraction, rng)
+    counts = _integer_counts(len(pooled), profile)
+    split_points = np.cumsum(counts)[:-1]
+    splits = np.split(pooled, split_points)
+    result = {
+        client_id: split.astype(int).tolist()
+        for client_id, split in zip(client_ids, splits)
+    }
+    _ensure_nonempty_clients(result, rng)
+    return result
+
+
+def dirichlet_dual_skew_partition(
+    labels: Sequence[int],
+    num_clients: int,
+    alpha: float,
+    min_fraction: float = 0.25,
+    seed: int = 42,
+) -> Dict[int, List[int]]:
+    """Create label and quantity skew while assigning every sample once.
+
+    A fixed exponential client-size profile is multiplied into an independent
+    Dirichlet label allocation for every class.  Per-class integer allocation
+    uses largest remainders, so no example is duplicated or discarded.
+    """
+    if num_clients <= 0:
+        raise ValueError("num_clients must be positive")
+    if alpha <= 0.0:
+        raise ValueError("alpha must be positive")
+    rng = np.random.default_rng(seed)
+    labels = _as_numpy_labels(labels)
+    client_indices = {i: [] for i in range(num_clients)}
+    quantity_profile = _quantity_profile(num_clients, min_fraction, rng)
+
+    for cls in np.unique(labels):
+        cls_indices = np.where(labels == cls)[0]
+        rng.shuffle(cls_indices)
+        label_profile = rng.dirichlet(np.full(num_clients, alpha))
+        joint_profile = label_profile * quantity_profile
+        counts = _integer_counts(len(cls_indices), joint_profile)
+        split_points = np.cumsum(counts)[:-1]
+        for client_id, split in enumerate(np.split(cls_indices, split_points)):
+            client_indices[client_id].extend(split.astype(int).tolist())
+
+    _ensure_nonempty_clients(client_indices, rng)
+    for indices in client_indices.values():
+        rng.shuffle(indices)
+    return client_indices
 
 
 def iid_partition(labels: Sequence[int], num_clients: int, seed: int = 42) -> Dict[int, List[int]]:
@@ -82,6 +134,7 @@ def build_client_indices(
     partition: str = "dual_skew",
     alpha: float = 0.1,
     seed: int = 42,
+    quantity_min_fraction: float = 0.25,
 ) -> Dict[int, List[int]]:
     """Build label-skew, quantity-skew, dual-skew, or iid client partitions."""
     partition = partition.lower()
@@ -91,11 +144,87 @@ def build_client_indices(
         return dirichlet_label_skew_partition(labels, num_clients, alpha, seed)
     if partition == "quantity_skew":
         base = iid_partition(labels, num_clients, seed)
-        return quantity_skew_resample(base, seed=seed + 1)
+        return quantity_skew_resample(
+            base,
+            min_fraction=quantity_min_fraction,
+            seed=seed + 1,
+        )
     if partition == "dual_skew":
-        base = dirichlet_label_skew_partition(labels, num_clients, alpha, seed)
-        return quantity_skew_resample(base, seed=seed + 1)
+        return dirichlet_dual_skew_partition(
+            labels,
+            num_clients,
+            alpha,
+            min_fraction=quantity_min_fraction,
+            seed=seed,
+        )
     raise ValueError(f"unsupported partition mode: {partition}")
+
+
+def validate_complete_partition(
+    client_indices: Dict[int, List[int]],
+    num_samples: int,
+) -> Dict[str, int]:
+    """Validate exact, non-overlapping coverage and return size statistics."""
+    flattened = [index for indices in client_indices.values() for index in indices]
+    if any(index < 0 or index >= num_samples for index in flattened):
+        raise ValueError("partition contains an out-of-range sample index")
+    unique = set(flattened)
+    if len(unique) != len(flattened):
+        raise ValueError("partition contains duplicate sample assignments")
+    if unique != set(range(num_samples)):
+        missing = num_samples - len(unique)
+        raise ValueError(f"partition does not cover the training split: missing={missing}")
+    sizes = [len(indices) for indices in client_indices.values()]
+    return {
+        "assigned_examples": len(flattened),
+        "unique_examples": len(unique),
+        "client_examples_min": min(sizes, default=0),
+        "client_examples_max": max(sizes, default=0),
+    }
+
+
+def _quantity_profile(
+    num_clients: int,
+    min_fraction: float,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    if num_clients <= 0:
+        raise ValueError("num_clients must be positive")
+    if not 0.0 <= float(min_fraction) <= 1.0:
+        raise ValueError("min_fraction must be in [0, 1]")
+    raw = rng.exponential(scale=1.0, size=num_clients)
+    scaled = float(min_fraction) + (1.0 - float(min_fraction)) * raw / max(
+        float(raw.max()),
+        1e-12,
+    )
+    return scaled / scaled.sum()
+
+
+def _integer_counts(total: int, proportions: np.ndarray) -> np.ndarray:
+    proportions = np.maximum(np.asarray(proportions, dtype=float), 0.0)
+    if not np.any(proportions):
+        proportions = np.ones_like(proportions)
+    proportions /= proportions.sum()
+    exact = int(total) * proportions
+    counts = np.floor(exact).astype(int)
+    remainder = int(total) - int(counts.sum())
+    if remainder:
+        order = np.argsort(-(exact - counts), kind="stable")
+        counts[order[:remainder]] += 1
+    return counts
+
+
+def _ensure_nonempty_clients(
+    client_indices: Dict[int, List[int]],
+    rng: np.random.Generator,
+) -> None:
+    """Move samples from the largest clients if rounding creates an empty one."""
+    for empty_id in [client_id for client_id, values in client_indices.items() if not values]:
+        donor_id = max(client_indices, key=lambda client_id: len(client_indices[client_id]))
+        if len(client_indices[donor_id]) <= 1:
+            raise ValueError("not enough samples to give every client one example")
+        position = int(rng.integers(0, len(client_indices[donor_id])))
+        client_indices[empty_id].append(client_indices[donor_id].pop(position))
 
 
 def client_label_histograms(

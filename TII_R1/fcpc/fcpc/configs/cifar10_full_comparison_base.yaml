@@ -1,0 +1,69 @@
+{
+  "seed": 42,
+  "dataset": {
+    "name": "cifar10",
+    "num_classes": 10,
+    "input_channels": 3,
+    "root": "./data",
+    "download": false,
+    "augment": true,
+    "normalize": true
+  },
+  "model": {
+    "name": "resnet18"
+  },
+  "federated": {
+    "num_clients": 10,
+    "clients_per_round": 6,
+    "rounds": 200,
+    "local_epochs": 1,
+    "batch_size": 128,
+    "num_workers": 4,
+    "pin_memory": true,
+    "persistent_workers": false,
+    "aggregation": "weighted",
+    "device": "cuda:0"
+  },
+  "partition": {
+    "mode": "dual_skew",
+    "alpha": 0.1,
+    "quantity_min_fraction": 0.25,
+    "preserve_all_samples": true
+  },
+  "algorithm": {
+    "name": "fedavg"
+  },
+  "fcpc": {
+    "enabled": false,
+    "metric": "jsdn",
+    "reference_strategy": "partner",
+    "lambda_jsdn": 0.3,
+    "beta": 0.0,
+    "epsilon": 1.0,
+    "pairing_strategy": "fair_greedy_dissimilar"
+  },
+  "optimizer": {
+    "name": "sgd",
+    "lr": 0.05,
+    "momentum": 0.9,
+    "weight_decay": 0.0005,
+    "nesterov": false
+  },
+  "scheduler": {
+    "name": "cosine",
+    "min_lr": 0.0005
+  },
+  "evaluation": {
+    "validation_fraction": 0.1,
+    "validation_seed": 10042,
+    "test_every_round": false
+  },
+  "profiling": {
+    "sample_interval_s": 1.0
+  },
+  "logging": {
+    "output_dir": "outputs/cifar10_full_comparison/logs",
+    "checkpoint_dir": "outputs/cifar10_full_comparison/checkpoints",
+    "run_name": "resolved_by_comparison_runner"
+  }
+}

@@ -14,10 +14,11 @@ from src.data.partition import (
     build_client_indices,
     client_label_histograms,
     natural_client_partition,
+    validate_complete_partition,
 )
 from src.data.split import stratified_holdout_indices
 from src.fcpc.jsdn import metric_matrix
-from src.fcpc.pairing import pair_clients
+from src.fcpc.pairing import PairingResult, pair_clients
 from src.fcpc.regularizer import weighted_state_center
 from src.federated.client import Client
 from src.federated.server import Server
@@ -175,7 +176,23 @@ class Trainer:
                 partition=partition_mode,
                 alpha=float(partition_cfg.get("alpha", 0.1)),
                 seed=seed,
+                quantity_min_fraction=float(
+                    partition_cfg.get("quantity_min_fraction", 0.25)
+                ),
             )
+        partition_stats = validate_complete_partition(
+            relative_client_indices,
+            len(train_indices),
+        )
+        print(
+            "partition_coverage: "
+            f"assigned={partition_stats['assigned_examples']}, "
+            f"unique={partition_stats['unique_examples']}, "
+            f"expected={len(train_indices)}, "
+            f"client_min={partition_stats['client_examples_min']}, "
+            f"client_max={partition_stats['client_examples_max']}",
+            flush=True,
+        )
         client_indices = {
             client_id: [train_indices[position] for position in positions]
             for client_id, positions in relative_client_indices.items()
@@ -186,10 +203,22 @@ class Trainer:
             num_classes=num_classes,
         )
         batch_size = int(federated.get("batch_size", 64))
+        num_workers = int(federated.get("num_workers", 0))
+        pin_memory = bool(federated.get("pin_memory", False))
+        persistent_workers = bool(
+            federated.get("persistent_workers", False)
+        ) and num_workers > 0
         clients: list[Client] = []
         for client_id in range(num_clients):
             subset = Subset(train_dataset, client_indices[client_id])
-            loader = DataLoader(subset, batch_size=batch_size, shuffle=True, num_workers=int(federated.get("num_workers", 0)))
+            loader = DataLoader(
+                subset,
+                batch_size=batch_size,
+                shuffle=True,
+                num_workers=num_workers,
+                pin_memory=pin_memory,
+                persistent_workers=persistent_workers,
+            )
             clients.append(
                 Client(
                     client_id=client_id,
@@ -200,6 +229,19 @@ class Trainer:
             )
 
         device = self._select_device(str(federated.get("device", "auto")))
+        gpu_name = ""
+        cuda_version = ""
+        if device.startswith("cuda"):
+            device_index = torch.device(device).index
+            if device_index is None:
+                device_index = torch.cuda.current_device()
+            gpu_name = str(torch.cuda.get_device_name(device_index))
+            cuda_version = str(torch.version.cuda or "")
+        print(
+            f"runtime_device: {device}; gpu_name: {gpu_name or 'none'}; "
+            f"torch_cuda: {cuda_version or 'none'}",
+            flush=True,
+        )
         model = build_model(model_cfg.get("name", "simple_cnn"), num_classes=num_classes, input_channels=input_channels)
         model.to(device)
         global_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
@@ -207,6 +249,7 @@ class Trainer:
         if str(algorithm_cfg.get("name", "fedavg")).lower() == "fedcfa":
             algorithm_kwargs.setdefault("num_classes", num_classes)
         algorithm = build_algorithm(algorithm_cfg.get("name", "fedavg"), **algorithm_kwargs)
+        use_fcpc = bool(fcpc_cfg.get("enabled", True))
         model_factory = lambda: build_model(
             model_cfg.get("name", "simple_cnn"),
             num_classes=num_classes,
@@ -228,11 +271,12 @@ class Trainer:
             raise ValueError(
                 "fcpc.reference_strategy must be 'partner' or 'pair_center'"
             )
-        server.build_pairing(
-            epsilon=float(fcpc_cfg.get("epsilon", 1.0)),
-            seed=seed,
-            strategy=pairing_strategy,
-        )
+        if use_fcpc:
+            server.build_pairing(
+                epsilon=float(fcpc_cfg.get("epsilon", 1.0)),
+                seed=seed,
+                strategy=pairing_strategy,
+            )
 
         output_dir = Path(logging_cfg.get("output_dir", "outputs/logs"))
         run_name = logging_cfg.get("run_name", f"{dataset_name}_{algorithm.name}")
@@ -243,8 +287,16 @@ class Trainer:
                 "dataset",
                 "algorithm",
                 "fcpc",
+                "device",
+                "gpu_name",
+                "gpu_monitor_backend",
+                "gpu_sample_count",
                 "pairing_metric",
                 "reference_strategy",
+                "train_pool_examples",
+                "assigned_unique_examples",
+                "client_examples_min",
+                "client_examples_max",
                 "alpha",
                 "beta_base",
                 "beta",
@@ -285,7 +337,6 @@ class Trainer:
             ],
         )
 
-        num_workers = int(federated.get("num_workers", 0))
         validation_loader = None
         if validation_dataset is not None and validation_indices:
             validation_loader = DataLoader(
@@ -293,12 +344,16 @@ class Trainer:
                 batch_size=batch_size,
                 shuffle=False,
                 num_workers=num_workers,
+                pin_memory=pin_memory,
+                persistent_workers=persistent_workers,
             )
         test_loader = DataLoader(
             test_dataset,
             batch_size=batch_size,
             shuffle=False,
             num_workers=num_workers,
+            pin_memory=pin_memory,
+            persistent_workers=persistent_workers,
         )
         reference_inputs = None
         if validation_loader is not None:
@@ -317,7 +372,6 @@ class Trainer:
         momentum = float(optimizer_cfg.get("momentum", 0.0))
         weight_decay = float(optimizer_cfg.get("weight_decay", 0.0))
         nesterov = bool(optimizer_cfg.get("nesterov", False))
-        use_fcpc = bool(fcpc_cfg.get("enabled", True))
         beta_base = float(fcpc_cfg.get("beta", 0.2))
         beta_schedule = str(fcpc_cfg.get("beta_schedule", "constant")).lower()
         beta_min = float(fcpc_cfg.get("min_beta", 0.0))
@@ -374,13 +428,21 @@ class Trainer:
                 device=device,
                 max_batches=max_batches,
             )
-            pairing_started = perf_counter()
-            pairing = server.pair_selected(
-                selected,
-                strategy=pairing_strategy,
-                seed=seed + round_idx,
-            )
-            pairing_time_s = perf_counter() - pairing_started
+            if use_fcpc:
+                pairing_started = perf_counter()
+                pairing = server.pair_selected(
+                    selected,
+                    strategy=pairing_strategy,
+                    seed=seed + round_idx,
+                )
+                pairing_time_s = perf_counter() - pairing_started
+            else:
+                pairing = PairingResult(
+                    pairs=[],
+                    pair_map={},
+                    unpaired=[int(client_id) for client_id in selected],
+                )
+                pairing_time_s = 0.0
             # Freeze all partner references at the start of the round. Without
             # this snapshot, sequential simulation would make the constraint
             # asymmetric: the second client in a pair could observe the first
@@ -542,8 +604,16 @@ class Trainer:
                     "dataset": dataset_name,
                     "algorithm": algorithm.name,
                     "fcpc": use_fcpc,
+                    "device": device,
+                    "gpu_name": gpu_name,
+                    "gpu_monitor_backend": resource_stats.gpu_monitor_backend,
+                    "gpu_sample_count": resource_stats.gpu_sample_count,
                     "pairing_metric": server.pairing_metric,
                     "reference_strategy": reference_strategy,
+                    "train_pool_examples": len(train_indices),
+                    "assigned_unique_examples": partition_stats["unique_examples"],
+                    "client_examples_min": partition_stats["client_examples_min"],
+                    "client_examples_max": partition_stats["client_examples_max"],
                     "alpha": partition_cfg.get("alpha", ""),
                     "beta_base": beta_base,
                     "beta": beta,
@@ -640,6 +710,10 @@ class Trainer:
             "test_acc": selected_test_metrics["test_acc"],
             "last_test_loss": last_test_metrics["test_loss"],
             "last_test_acc": last_test_metrics["test_acc"],
+            "device": device,
+            "gpu_name": gpu_name,
+            "train_pool_examples": len(train_indices),
+            "assigned_unique_examples": partition_stats["unique_examples"],
         }
 
     @staticmethod
@@ -717,6 +791,7 @@ class Trainer:
         model.to(device)
         model.eval()
         criterion = nn.CrossEntropyLoss(reduction="sum")
+        non_blocking = str(device).startswith("cuda")
         total_loss = 0.0
         total_correct = 0
         total_samples = 0
@@ -724,8 +799,8 @@ class Trainer:
             for batch_idx, (x, y) in enumerate(data_loader):
                 if max_batches is not None and batch_idx >= int(max_batches):
                     break
-                x = x.to(device)
-                y = y.to(device)
+                x = x.to(device, non_blocking=non_blocking)
+                y = y.to(device, non_blocking=non_blocking)
                 logits = model(x)
                 if not bool(torch.isfinite(logits).all()):
                     raise FloatingPointError(
@@ -832,6 +907,11 @@ class Trainer:
     def _select_device(requested: str) -> str:
         import torch
 
+        requested = str(requested).lower()
         if requested == "auto":
             return "cuda" if torch.cuda.is_available() else "cpu"
+        if requested.startswith("cuda") and not torch.cuda.is_available():
+            raise RuntimeError(
+                f"CUDA was explicitly requested ({requested}) but torch.cuda.is_available() is False"
+            )
         return requested

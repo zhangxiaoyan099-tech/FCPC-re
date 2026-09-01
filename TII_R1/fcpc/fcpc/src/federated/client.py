@@ -73,14 +73,15 @@ class Client:
         }
         processed_examples = 0
         processed_batches = 0
+        non_blocking = str(device).startswith("cuda")
 
         try:
             for _ in range(local_epochs):
                 for batch_idx, (x, y) in enumerate(self.train_loader):
                     if max_batches is not None and batch_idx >= max_batches:
                         break
-                    x = x.to(device)
-                    y = y.to(device)
+                    x = x.to(device, non_blocking=non_blocking)
+                    y = y.to(device, non_blocking=non_blocking)
                     optimizer.zero_grad(set_to_none=True)
                     logits, forward_context = algorithm.forward(model, x)
                     task_loss = criterion(logits, y)

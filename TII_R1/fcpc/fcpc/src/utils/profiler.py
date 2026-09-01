@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import threading
 from dataclasses import dataclass
 from typing import Mapping
@@ -28,6 +30,8 @@ class ResourceStats:
     gpu_util_mean_pct: float = 0.0
     gpu_util_peak_pct: float = 0.0
     gpu_memory_peak_mib: float = 0.0
+    gpu_monitor_backend: str = "none"
+    gpu_sample_count: int = 0
 
 
 class ResourceMonitor:
@@ -43,6 +47,10 @@ class ResourceMonitor:
         self._gpu_samples: list[float] = []
         self._process = None
         self._torch = None
+        self._gpu_index = 0
+        self._torch_utilization_available = False
+        self._nvidia_smi_path: str | None = None
+        self._gpu_monitor_backend = "none"
 
     def start(self) -> "ResourceMonitor":
         try:
@@ -59,7 +67,17 @@ class ResourceMonitor:
 
                 if torch.cuda.is_available():
                     self._torch = torch
+                    parsed_device = torch.device(self.device)
+                    self._gpu_index = (
+                        torch.cuda.current_device()
+                        if parsed_device.index is None
+                        else int(parsed_device.index)
+                    )
                     torch.cuda.reset_peak_memory_stats(self.device)
+                    self._torch_utilization_available = callable(
+                        getattr(torch.cuda, "utilization", None)
+                    )
+                    self._nvidia_smi_path = shutil.which("nvidia-smi")
             except Exception:
                 self._torch = None
 
@@ -89,6 +107,8 @@ class ResourceMonitor:
             gpu_util_mean_pct=_mean(self._gpu_samples),
             gpu_util_peak_pct=max(self._gpu_samples, default=0.0),
             gpu_memory_peak_mib=gpu_memory_peak,
+            gpu_monitor_backend=self._gpu_monitor_backend,
+            gpu_sample_count=len(self._gpu_samples),
         )
 
     def _sample_loop(self) -> None:
@@ -105,10 +125,34 @@ class ResourceMonitor:
             except Exception:
                 pass
         if self._torch is not None:
-            try:
-                self._gpu_samples.append(float(self._torch.cuda.utilization(self.device)))
-            except Exception:
-                pass
+            if self._torch_utilization_available:
+                try:
+                    self._gpu_samples.append(
+                        float(self._torch.cuda.utilization(self.device))
+                    )
+                    self._gpu_monitor_backend = "torch.cuda.utilization"
+                    return
+                except Exception:
+                    self._torch_utilization_available = False
+            if self._nvidia_smi_path is not None:
+                try:
+                    completed = subprocess.run(
+                        [
+                            self._nvidia_smi_path,
+                            f"--id={self._gpu_index}",
+                            "--query-gpu=utilization.gpu",
+                            "--format=csv,noheader,nounits",
+                        ],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                        timeout=max(2.0, 4.0 * self.interval_s),
+                    )
+                    value = completed.stdout.strip().splitlines()[0]
+                    self._gpu_samples.append(float(value))
+                    self._gpu_monitor_backend = "nvidia-smi"
+                except Exception:
+                    self._nvidia_smi_path = None
 
 
 def _mean(values: list[float]) -> float:
