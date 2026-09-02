@@ -1,0 +1,66 @@
+{
+  "seed": 42,
+  "dataset": {
+    "name": "cifar10",
+    "num_classes": 10,
+    "input_channels": 3,
+    "root": "./data",
+    "download": false,
+    "augment": true,
+    "normalize": true
+  },
+  "model": {
+    "name": "resnet18"
+  },
+  "federated": {
+    "num_clients": 10,
+    "clients_per_round": 10,
+    "rounds": 100,
+    "local_epochs": 5,
+    "batch_size": 64,
+    "aggregation": "weighted",
+    "device": "auto",
+    "num_workers": 4
+  },
+  "partition": {
+    "mode": "dual_skew",
+    "alpha": 0.1,
+    "quantity_skew": true
+  },
+  "algorithm": {
+    "name": "fedavg"
+  },
+  "fcpc": {
+    "enabled": true,
+    "metric": "pair_complementarity",
+    "reference_strategy": "pair_center",
+    "update_rule": "proximal",
+    "beta": 0.2,
+    "beta_schedule": "cosine",
+    "min_beta": 0.0,
+    "epsilon": 1.0,
+    "pairing_strategy": "optimal",
+    "partner_weighting": "uniform",
+    "center_max_relative_distance": 0.05,
+    "pairing_max_center_relative_distance": 0.10
+  },
+  "optimizer": {
+    "name": "sgd",
+    "lr": 0.05,
+    "momentum": 0.9,
+    "weight_decay": 0.0005
+  },
+  "scheduler": {
+    "name": "cosine",
+    "min_lr": 0.0005
+  },
+  "evaluation": {
+    "validation_fraction": 0.1,
+    "test_every_round": false
+  },
+  "logging": {
+    "output_dir": "outputs/logs",
+    "checkpoint_dir": "outputs/checkpoints",
+    "run_name": "cifar10_safe_proximal_fcpc"
+  }
+}

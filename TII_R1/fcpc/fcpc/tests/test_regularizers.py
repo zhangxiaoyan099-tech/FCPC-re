@@ -8,7 +8,13 @@ except ImportError:  # pragma: no cover - exercised only in minimal environments
     torch = None
 
 from src.algorithms.fedprox import FedProxAdapter
-from src.fcpc.regularizer import fcpc_regularization, weighted_state_center
+from src.fcpc.regularizer import (
+    clip_state_center_to_global,
+    fcpc_regularization,
+    proximal_center_step,
+    state_l2_distance,
+    weighted_state_center,
+)
 
 
 @unittest.skipIf(torch is None, "PyTorch is not installed")
@@ -66,6 +72,59 @@ class RegularizerGradientTests(unittest.TestCase):
         penalty.backward()
         expected = torch.full_like(model.weight, -0.4)
         self.assertTrue(torch.allclose(model.weight.grad, expected))
+
+    def test_proximal_center_step_contracts_pair_disagreement(self) -> None:
+        left = torch.nn.Linear(2, 1, bias=False)
+        right = torch.nn.Linear(2, 1, bias=False)
+        with torch.no_grad():
+            left.weight.copy_(torch.tensor([[2.0, -1.0]]))
+            right.weight.copy_(torch.tensor([[-2.0, 3.0]]))
+        center = {"weight": torch.tensor([[10.0, 10.0]])}
+        before = torch.linalg.vector_norm(left.weight - right.weight)
+
+        left_factor = proximal_center_step(
+            dict(left.named_parameters()),
+            center,
+            beta=0.5,
+            learning_rate=0.2,
+        )
+        right_factor = proximal_center_step(
+            dict(right.named_parameters()),
+            center,
+            beta=0.5,
+            learning_rate=0.2,
+        )
+
+        after = torch.linalg.vector_norm(left.weight - right.weight)
+        expected_factor = 1.0 / 1.2
+        self.assertAlmostEqual(left_factor, expected_factor)
+        self.assertAlmostEqual(right_factor, expected_factor)
+        self.assertTrue(torch.allclose(after, before * expected_factor))
+
+    def test_center_clipping_enforces_global_radius(self) -> None:
+        global_state = {
+            "weight": torch.tensor([0.0, 0.0]),
+            "buffer": torch.tensor(7, dtype=torch.long),
+        }
+        center = {
+            "weight": torch.tensor([3.0, 4.0]),
+            "buffer": torch.tensor(9, dtype=torch.long),
+        }
+
+        clipped, original_distance, scale = clip_state_center_to_global(
+            center,
+            global_state,
+            max_distance=2.0,
+            parameter_names={"weight"},
+        )
+
+        self.assertAlmostEqual(original_distance, 5.0)
+        self.assertAlmostEqual(scale, 0.4)
+        self.assertAlmostEqual(
+            state_l2_distance(clipped, global_state, {"weight"}),
+            2.0,
+        )
+        self.assertEqual(int(clipped["buffer"]), 9)
 
     def test_fedprox_regularizer_contributes_gradient(self) -> None:
         model = torch.nn.Linear(2, 1, bias=False)

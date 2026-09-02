@@ -4,6 +4,11 @@ import unittest
 
 import numpy as np
 
+try:
+    import networkx as nx
+except ImportError:  # pragma: no cover - minimal local environments
+    nx = None
+
 from src.fcpc.pairing import (
     greedy_high_dissimilarity_pairing,
     greedy_similarity_pairing,
@@ -54,6 +59,7 @@ class PairingTests(unittest.TestCase):
         result = greedy_similarity_pairing(matrix)
         self.assertEqual(result.pairs, [(0, 2), (1, 3)])
 
+    @unittest.skipIf(nx is None, "NetworkX is not installed")
     def test_optimal_pairing_can_improve_on_greedy(self) -> None:
         matrix = np.array(
             [
@@ -67,6 +73,30 @@ class PairingTests(unittest.TestCase):
         optimal = optimal_high_dissimilarity_pairing(matrix)
         self.assertEqual(pairing_weight(greedy, matrix), 11.0)
         self.assertEqual(pairing_weight(optimal, matrix), 18.0)
+
+    @unittest.skipIf(nx is None, "NetworkX is not installed")
+    def test_optimal_pairing_respects_safe_edge_mask(self) -> None:
+        matrix = np.array(
+            [
+                [0.0, 10.0, 4.0, 3.0],
+                [10.0, 0.0, 3.0, 4.0],
+                [4.0, 3.0, 0.0, 9.0],
+                [3.0, 4.0, 9.0, 0.0],
+            ]
+        )
+        feasible = np.ones_like(matrix, dtype=bool)
+        np.fill_diagonal(feasible, False)
+        feasible[0, 1] = feasible[1, 0] = False
+        feasible[2, 3] = feasible[3, 2] = False
+
+        result = optimal_high_dissimilarity_pairing(
+            matrix,
+            feasible_mask=feasible,
+        )
+
+        self.assertEqual(result.pairs, [(0, 2), (1, 3)])
+        self.assertNotIn((0, 1), result.pairs)
+        self.assertNotIn((2, 3), result.pairs)
 
     def test_random_pairing_is_reproducible(self) -> None:
         self.assertEqual(random_pairing(5, seed=7), random_pairing(5, seed=7))

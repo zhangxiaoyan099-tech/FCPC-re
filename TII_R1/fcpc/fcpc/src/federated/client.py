@@ -5,7 +5,7 @@ from typing import Any, Mapping
 
 import numpy as np
 
-from src.fcpc.regularizer import fcpc_regularization
+from src.fcpc.regularizer import fcpc_regularization, proximal_center_step
 
 
 @dataclass
@@ -33,6 +33,7 @@ class Client:
         device: str = "cpu",
         max_batches: int | None = None,
         mean_sample_count: float = 1.0,
+        fcpc_update_rule: str = "penalty",
         return_metrics: bool = False,
     ):
         """Run local training. Requires PyTorch and a DataLoader."""
@@ -54,6 +55,9 @@ class Client:
             nesterov=nesterov,
         )
         criterion = nn.CrossEntropyLoss()
+        fcpc_update_rule = str(fcpc_update_rule).lower()
+        if fcpc_update_rule not in {"penalty", "proximal"}:
+            raise ValueError("fcpc_update_rule must be 'penalty' or 'proximal'")
         algorithm.begin_local_train(
             model=model,
             client_id=self.client_id,
@@ -100,14 +104,28 @@ class Client:
                             beta=1.0,
                         )
                     fcpc_weighted_loss = float(beta) * fcpc_raw_loss
-                    loss = task_loss + algorithm_loss + fcpc_weighted_loss
-                    loss.backward()
+                    reported_total_loss = task_loss + algorithm_loss + fcpc_weighted_loss
+                    optimization_loss = task_loss + algorithm_loss
+                    if fcpc_update_rule == "penalty":
+                        optimization_loss = optimization_loss + fcpc_weighted_loss
+                    optimization_loss.backward()
                     algorithm.after_backward(
                         model=model,
                         client_id=self.client_id,
                         batch=(x, y),
                     )
                     optimizer.step()
+                    if (
+                        fcpc_update_rule == "proximal"
+                        and use_fcpc
+                        and paired_previous_state is not None
+                    ):
+                        proximal_center_step(
+                            dict(model.named_parameters()),
+                            paired_previous_state,
+                            beta=float(beta),
+                            learning_rate=float(lr),
+                        )
 
                     batch_examples = int(y.numel())
                     processed_examples += batch_examples
@@ -117,7 +135,10 @@ class Client:
                         "algorithm_loss": algorithm_loss,
                         "fcpc_raw_loss": fcpc_raw_loss,
                         "fcpc_weighted_loss": fcpc_weighted_loss,
-                        "total_loss": loss,
+                        # In proximal mode this is the pre-step composite
+                        # objective used for monitoring; the actual update is
+                        # task/algorithm optimizer step followed by prox.
+                        "total_loss": reported_total_loss,
                     }
                     for name, value in values.items():
                         metric_sums[name] += float(value.detach().item()) * batch_examples

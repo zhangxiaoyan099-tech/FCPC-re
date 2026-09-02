@@ -19,7 +19,12 @@ from src.data.partition import (
 from src.data.split import stratified_holdout_indices
 from src.fcpc.jsdn import metric_matrix
 from src.fcpc.pairing import PairingResult, pair_clients
-from src.fcpc.regularizer import weighted_state_center
+from src.fcpc.regularizer import (
+    clip_state_center_to_global,
+    state_l2_distance,
+    state_l2_norm,
+    weighted_state_center,
+)
 from src.federated.client import Client
 from src.federated.server import Server
 from src.models import build_model
@@ -82,6 +87,7 @@ class Trainer:
             "pairing_metric": pairing_metric,
             "pairing_strategy": pairing_strategy,
             "reference_strategy": str(fcpc_cfg.get("reference_strategy", "partner")),
+            "fcpc_update_rule": str(fcpc_cfg.get("update_rule", "penalty")),
             "pairing_matrix_shape": tuple(matrix.shape),
             "jsdn_shape": tuple(matrix.shape),
             "model": model_name,
@@ -271,6 +277,13 @@ class Trainer:
             raise ValueError(
                 "fcpc.reference_strategy must be 'partner' or 'pair_center'"
             )
+        fcpc_update_rule = str(fcpc_cfg.get("update_rule", "penalty")).lower()
+        if fcpc_update_rule not in {"penalty", "proximal"}:
+            raise ValueError("fcpc.update_rule must be 'penalty' or 'proximal'")
+        if fcpc_update_rule == "proximal" and reference_strategy != "pair_center":
+            raise ValueError(
+                "fcpc.update_rule='proximal' requires reference_strategy='pair_center'"
+            )
         if use_fcpc:
             server.build_pairing(
                 epsilon=float(fcpc_cfg.get("epsilon", 1.0)),
@@ -293,6 +306,12 @@ class Trainer:
                 "gpu_sample_count",
                 "pairing_metric",
                 "reference_strategy",
+                "fcpc_update_rule",
+                "center_clip_limit",
+                "mean_center_distance",
+                "mean_center_clip_scale",
+                "safe_pairing_limit",
+                "safe_pairing_feasible_edges",
                 "train_pool_examples",
                 "assigned_unique_examples",
                 "client_examples_min",
@@ -384,6 +403,7 @@ class Trainer:
         profiling_cfg = self.config.get("profiling", {})
         profile_interval_s = float(profiling_cfg.get("sample_interval_s", 0.1))
         model_bytes = state_dict_nbytes(global_state)
+        parameter_names = set(dict(model.named_parameters()))
         cumulative_total_bytes = 0
 
         max_eval_batches = federated.get("max_eval_batches")
@@ -428,12 +448,44 @@ class Trainer:
                 device=device,
                 max_batches=max_batches,
             )
+            # Freeze every selected client's pre-round state before pairing or
+            # local training.  The same snapshots are used to construct safe
+            # matching constraints and the common centers.
+            previous_states = {
+                client_id: clients[client_id].previous_state
+                for client_id in selected
+            }
+            global_parameter_norm = state_l2_norm(
+                global_state,
+                parameter_names=parameter_names,
+            )
+            safe_pairing_limit = self._resolve_distance_limit(
+                fcpc_cfg.get("pairing_max_center_distance"),
+                fcpc_cfg.get("pairing_max_center_relative_distance"),
+                global_parameter_norm,
+            )
+            feasible_mask = None
+            feasible_edge_count = ""
+            if use_fcpc and safe_pairing_limit is not None:
+                if pairing_strategy.lower() == "random":
+                    raise ValueError(
+                        "safe center constraints are not supported with random pairing"
+                    )
+                feasible_mask, feasible_edge_count = self._safe_pairing_mask(
+                    clients=clients,
+                    selected=selected,
+                    previous_states=previous_states,
+                    global_state=global_state,
+                    parameter_names=parameter_names,
+                    max_center_distance=safe_pairing_limit,
+                )
             if use_fcpc:
                 pairing_started = perf_counter()
                 pairing = server.pair_selected(
                     selected,
                     strategy=pairing_strategy,
                     seed=seed + round_idx,
+                    feasible_mask=feasible_mask,
                 )
                 pairing_time_s = perf_counter() - pairing_started
             else:
@@ -443,15 +495,14 @@ class Trainer:
                     unpaired=[int(client_id) for client_id in selected],
                 )
                 pairing_time_s = 0.0
-            # Freeze all partner references at the start of the round. Without
-            # this snapshot, sequential simulation would make the constraint
-            # asymmetric: the second client in a pair could observe the first
-            # client's already-updated current-round model.
-            previous_states = {
-                client_id: clients[client_id].previous_state
-                for client_id in selected
-            }
             reference_states = {}
+            center_distances = []
+            center_clip_scales = []
+            center_clip_limit = self._resolve_distance_limit(
+                fcpc_cfg.get("center_max_distance"),
+                fcpc_cfg.get("center_max_relative_distance"),
+                global_parameter_norm,
+            )
             if reference_strategy == "pair_center":
                 for client_a, client_b in pairing.pairs:
                     center = weighted_state_center(
@@ -461,6 +512,14 @@ class Trainer:
                         clients[client_b].sample_count,
                         fallback_state=global_state,
                     )
+                    center, center_distance, clip_scale = clip_state_center_to_global(
+                        center,
+                        global_state,
+                        max_distance=center_clip_limit,
+                        parameter_names=parameter_names,
+                    )
+                    center_distances.append(center_distance)
+                    center_clip_scales.append(clip_scale)
                     # Both clients are constrained to exactly the same frozen
                     # pair center.  This is the model-space counterpart of the
                     # sample-weighted label mixture used in the edge score.
@@ -515,6 +574,7 @@ class Trainer:
                         device=device,
                         max_batches=max_batches,
                         mean_sample_count=mean_sample_count,
+                        fcpc_update_rule=fcpc_update_rule,
                         return_metrics=True,
                     )
                     self._assert_finite_state(
@@ -610,6 +670,20 @@ class Trainer:
                     "gpu_sample_count": resource_stats.gpu_sample_count,
                     "pairing_metric": server.pairing_metric,
                     "reference_strategy": reference_strategy,
+                    "fcpc_update_rule": fcpc_update_rule,
+                    "center_clip_limit": (
+                        "" if center_clip_limit is None else center_clip_limit
+                    ),
+                    "mean_center_distance": (
+                        float(np.mean(center_distances)) if center_distances else 0.0
+                    ),
+                    "mean_center_clip_scale": (
+                        float(np.mean(center_clip_scales)) if center_clip_scales else 1.0
+                    ),
+                    "safe_pairing_limit": (
+                        "" if safe_pairing_limit is None else safe_pairing_limit
+                    ),
+                    "safe_pairing_feasible_edges": feasible_edge_count,
                     "train_pool_examples": len(train_indices),
                     "assigned_unique_examples": partition_stats["unique_examples"],
                     "client_examples_min": partition_stats["client_examples_min"],
@@ -902,6 +976,65 @@ class Trainer:
             scale = 2.0 if name == "sample_ratio_x2" else 1.0
             return float(scale * partner_count / denominator)
         raise ValueError(f"unsupported FCPC partner weighting: {strategy}")
+
+    @staticmethod
+    def _resolve_distance_limit(
+        absolute_value,
+        relative_value,
+        reference_norm: float,
+    ) -> float | None:
+        """Resolve an absolute or scale-aware model-space safety radius."""
+        if absolute_value not in (None, ""):
+            limit = float(absolute_value)
+            if limit < 0.0:
+                raise ValueError("absolute center distance limits must be non-negative")
+            return limit
+        if relative_value not in (None, ""):
+            ratio = float(relative_value)
+            if ratio < 0.0:
+                raise ValueError("relative center distance limits must be non-negative")
+            return ratio * float(reference_norm)
+        return None
+
+    @staticmethod
+    def _safe_pairing_mask(
+        *,
+        clients,
+        selected: list[int],
+        previous_states,
+        global_state,
+        parameter_names: set[str],
+        max_center_distance: float,
+    ) -> tuple[np.ndarray, int]:
+        """Allow only edges whose *unclipped* center is near the global model.
+
+        An infeasible client is left unpaired rather than silently falling
+        back to an unsafe edge.  It still performs ordinary local training and
+        participates in server aggregation.
+        """
+        n_clients = len(clients)
+        mask = np.zeros((n_clients, n_clients), dtype=bool)
+        feasible_edges = 0
+        selected = [int(client_id) for client_id in selected]
+        for offset, client_a in enumerate(selected):
+            for client_b in selected[offset + 1 :]:
+                center = weighted_state_center(
+                    previous_states.get(client_a),
+                    previous_states.get(client_b),
+                    clients[client_a].sample_count,
+                    clients[client_b].sample_count,
+                    fallback_state=global_state,
+                )
+                distance = state_l2_distance(
+                    center,
+                    global_state,
+                    parameter_names=parameter_names,
+                )
+                if distance <= float(max_center_distance):
+                    mask[client_a, client_b] = True
+                    mask[client_b, client_a] = True
+                    feasible_edges += 1
+        return mask, feasible_edges
 
     @staticmethod
     def _select_device(requested: str) -> str:

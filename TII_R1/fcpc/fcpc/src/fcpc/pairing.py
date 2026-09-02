@@ -15,7 +15,10 @@ class PairingResult:
     unpaired: List[int]
 
 
-def greedy_high_dissimilarity_pairing(jsdn_matrix: np.ndarray) -> PairingResult:
+def greedy_high_dissimilarity_pairing(
+    jsdn_matrix: np.ndarray,
+    feasible_mask: np.ndarray | None = None,
+) -> PairingResult:
     """Greedily pair clients by repeatedly selecting the largest matrix entry.
 
     If the number of clients is odd, the final remaining client is returned in
@@ -23,12 +26,14 @@ def greedy_high_dissimilarity_pairing(jsdn_matrix: np.ndarray) -> PairingResult:
     """
     matrix = _validated_matrix(jsdn_matrix)
     n_clients = matrix.shape[0]
+    feasible = _validated_feasible_mask(feasible_mask, n_clients)
     available = set(range(n_clients))
     pairs: List[Tuple[int, int]] = []
     edges = [
         (float(matrix[i, j]), i, j)
         for i in range(n_clients)
         for j in range(i + 1, n_clients)
+        if feasible[i, j]
     ]
     # Deterministic descending weight order with client-id tie breaking.
     edges.sort(key=lambda edge: (-edge[0], edge[1], edge[2]))
@@ -43,19 +48,24 @@ def greedy_high_dissimilarity_pairing(jsdn_matrix: np.ndarray) -> PairingResult:
     return _result(pairs, sorted(available))
 
 
-def greedy_similarity_pairing(jsdn_matrix: np.ndarray) -> PairingResult:
+def greedy_similarity_pairing(
+    jsdn_matrix: np.ndarray,
+    feasible_mask: np.ndarray | None = None,
+) -> PairingResult:
     """Greedily pair the most similar remaining clients.
 
     This is an ablation baseline, not the proposed FCPC strategy.
     """
     matrix = _validated_matrix(jsdn_matrix)
     n_clients = matrix.shape[0]
+    feasible = _validated_feasible_mask(feasible_mask, n_clients)
     available = set(range(n_clients))
     pairs: List[Tuple[int, int]] = []
     edges = [
         (float(matrix[i, j]), i, j)
         for i in range(n_clients)
         for j in range(i + 1, n_clients)
+        if feasible[i, j]
     ]
     edges.sort(key=lambda edge: (edge[0], edge[1], edge[2]))
     for _, i, j in edges:
@@ -78,7 +88,10 @@ def random_pairing(n_clients: int, seed: int = 42) -> PairingResult:
     return _result(pairs, unpaired)
 
 
-def optimal_high_dissimilarity_pairing(jsdn_matrix: np.ndarray) -> PairingResult:
+def optimal_high_dissimilarity_pairing(
+    jsdn_matrix: np.ndarray,
+    feasible_mask: np.ndarray | None = None,
+) -> PairingResult:
     """Compute an exact maximum-weight, maximum-cardinality matching.
 
     This optimization-based strategy measures the quality/speed trade-off of
@@ -91,11 +104,13 @@ def optimal_high_dissimilarity_pairing(jsdn_matrix: np.ndarray) -> PairingResult
         raise ImportError("NetworkX is required for optimal pairing") from exc
 
     n_clients = matrix.shape[0]
+    feasible = _validated_feasible_mask(feasible_mask, n_clients)
     graph = nx.Graph()
     graph.add_nodes_from(range(n_clients))
     for i in range(n_clients):
         for j in range(i + 1, n_clients):
-            graph.add_edge(i, j, weight=float(matrix[i, j]))
+            if feasible[i, j]:
+                graph.add_edge(i, j, weight=float(matrix[i, j]))
     matching = nx.algorithms.matching.max_weight_matching(
         graph,
         maxcardinality=True,
@@ -111,18 +126,30 @@ def pair_clients(
     jsdn_matrix: np.ndarray,
     strategy: str = "greedy_dissimilar",
     seed: int = 42,
+    feasible_mask: np.ndarray | None = None,
 ) -> PairingResult:
     """Dispatch a proposed or ablation pairing strategy."""
     strategy = strategy.lower()
     if strategy in {"greedy_dissimilar", "greedy", "fcpc"}:
-        return greedy_high_dissimilarity_pairing(jsdn_matrix)
+        return greedy_high_dissimilarity_pairing(
+            jsdn_matrix,
+            feasible_mask=feasible_mask,
+        )
     if strategy in {"similar", "greedy_similar"}:
-        return greedy_similarity_pairing(jsdn_matrix)
+        return greedy_similarity_pairing(
+            jsdn_matrix,
+            feasible_mask=feasible_mask,
+        )
     if strategy == "random":
+        if feasible_mask is not None:
+            raise ValueError("feasible_mask is not supported by random pairing")
         matrix = _validated_matrix(jsdn_matrix)
         return random_pairing(matrix.shape[0], seed=seed)
     if strategy in {"optimal", "max_weight"}:
-        return optimal_high_dissimilarity_pairing(jsdn_matrix)
+        return optimal_high_dissimilarity_pairing(
+            jsdn_matrix,
+            feasible_mask=feasible_mask,
+        )
     raise ValueError(f"unsupported pairing strategy: {strategy}")
 
 
@@ -142,6 +169,23 @@ def _validated_matrix(jsdn_matrix: np.ndarray) -> np.ndarray:
         raise ValueError("jsdn_matrix must contain non-negative weights")
     np.fill_diagonal(matrix, 0.0)
     return matrix
+
+
+def _validated_feasible_mask(
+    feasible_mask: np.ndarray | None,
+    n_clients: int,
+) -> np.ndarray:
+    if feasible_mask is None:
+        mask = np.ones((n_clients, n_clients), dtype=bool)
+        np.fill_diagonal(mask, False)
+        return mask
+    mask = np.asarray(feasible_mask, dtype=bool).copy()
+    if mask.shape != (n_clients, n_clients):
+        raise ValueError("feasible_mask must have the same shape as jsdn_matrix")
+    if not np.array_equal(mask, mask.T):
+        raise ValueError("feasible_mask must be symmetric")
+    np.fill_diagonal(mask, False)
+    return mask
 
 
 def _result(pairs: List[Tuple[int, int]], unpaired: List[int]) -> PairingResult:

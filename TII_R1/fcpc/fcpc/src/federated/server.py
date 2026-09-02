@@ -64,6 +64,7 @@ class Server:
         selected_client_ids: List[int],
         strategy: str = "greedy_dissimilar",
         seed: int = 42,
+        feasible_mask: np.ndarray | None = None,
     ) -> PairingResult:
         """Pair only clients participating in the current round."""
         if self.pairing_matrix is None:
@@ -90,7 +91,21 @@ class Server:
                 pairing_pool = [client_id for client_id in selected if client_id != bye]
 
         submatrix = self.pairing_matrix[np.ix_(pairing_pool, pairing_pool)]
-        local = pair_clients(submatrix, strategy=base_strategy, seed=seed)
+        local_feasible_mask = None
+        if feasible_mask is not None:
+            feasible_mask = np.asarray(feasible_mask, dtype=bool)
+            expected_shape = self.pairing_matrix.shape
+            if feasible_mask.shape != expected_shape:
+                raise ValueError(
+                    "feasible_mask must have the same shape as pairing_matrix"
+                )
+            local_feasible_mask = feasible_mask[np.ix_(pairing_pool, pairing_pool)]
+        local = pair_clients(
+            submatrix,
+            strategy=base_strategy,
+            seed=seed,
+            feasible_mask=local_feasible_mask,
+        )
         pairs = [(pairing_pool[i], pairing_pool[j]) for i, j in local.pairs]
         pair_map = {}
         for i, j in pairs:
