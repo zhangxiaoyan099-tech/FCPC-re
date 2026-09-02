@@ -9,9 +9,16 @@ from scripts.run_new_fcpc_beta_ablation import (
     _build_config,
     _parse_betas,
 )
+from scripts.run_cifar10_full_comparison import METHOD_OVERRIDES
 
 
 class BetaAblationRunnerTests(unittest.TestCase):
+    def test_formal_comparison_uses_validation_selected_beta(self) -> None:
+        new_fcpc = METHOD_OVERRIDES["new_fcpc"]["fcpc"]
+        self.assertEqual(new_fcpc["beta"], 0.001)
+        self.assertEqual(new_fcpc["beta_schedule"], "cosine_decay")
+        self.assertEqual(new_fcpc["min_beta"], 0.0)
+
     def test_beta_parser_and_tags_are_stable(self) -> None:
         self.assertEqual(_parse_betas("0.005,0.01,0.2"), [0.005, 0.01, 0.2])
         self.assertEqual(_beta_tag(0.005), "0p005")

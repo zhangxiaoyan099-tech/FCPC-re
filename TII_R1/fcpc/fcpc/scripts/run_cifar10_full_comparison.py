@@ -88,7 +88,8 @@ METHOD_OVERRIDES = {
             "enabled": True,
             "metric": "pair_complementarity",
             "reference_strategy": "pair_center",
-            "beta": 0.2,
+            # Selected on development seed 42 using validation accuracy only.
+            "beta": 0.001,
             "beta_schedule": "cosine_decay",
             "min_beta": 0.0,
             "epsilon": 1.0,

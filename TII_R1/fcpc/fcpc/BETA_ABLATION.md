@@ -18,6 +18,11 @@ The default grid is:
 0.005, 0.01, 0.02, 0.05, 0.1, 0.2
 ```
 
+The subsequent refinement on development seed 42 tested `0.001`, `0.0025`
+and `0.0075`.  Validation accuracy selected `beta = 0.001` under the existing
+cosine decay to zero.  This value is frozen for formal seeds 43, 44 and 45;
+seed 42 is not included in the final multi-seed estimate.
+
 Only validation accuracy may be used to select beta.  Do not inspect or use
 test accuracy while making this choice.
 
