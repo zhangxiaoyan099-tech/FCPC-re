@@ -1,0 +1,74 @@
+seed: 42
+
+dataset:
+  name: cifar10
+  num_classes: 10
+  input_channels: 3
+  root: ./data
+  download: false
+  augment: false
+  normalize: true
+
+model:
+  name: resnet18
+
+federated:
+  num_clients: 10
+  batch_size: 64
+  device: cuda
+  num_workers: 2
+  pin_memory: true
+
+partition:
+  mode: dual_skew
+  alpha: 0.1
+  quantity_min_fraction: 0.25
+
+evaluation:
+  validation_fraction: 0.1
+  validation_seed: 10042
+
+audit:
+  # Reuse the neutral round-5 checkpoint created by cifar10_at_m_quick.yaml.
+  checkpoints: [5]
+  panels: [raw]
+  strategies: [optimal, random, similar, jsdn]
+  batch_seeds: [100, 101, 102, 103, 104]
+  random_pairing_seeds: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+  epsilon: 1.0
+  ldp_seed: 20042
+  lambda_jsdn: 0.3
+  gradient_batch_size: 128
+  gradient_max_batches: 20
+  gradient_num_workers: 2
+  validation_max_batches: 20
+  output_dir: outputs/at_m_residual_angles
+  checkpoint_dir: outputs/at_m_quick/neutral_checkpoints
+
+  # These fields must remain identical to the quick configuration because
+  # they are included in the neutral-checkpoint compatibility signature.
+  warmup:
+    batch_size: 64
+    local_epochs: 1
+    max_batches_per_client: 20
+    num_workers: 2
+    optimizer:
+      name: sgd
+      lr: 0.03
+      momentum: 0.9
+      weight_decay: 0.0005
+
+  replay:
+    batch_size: 64
+    local_steps: 2
+    num_workers: 0
+    beta: 0.01
+    partner_weighting: sample_ratio
+    update_rule: proximal
+    center_max_relative_distance: 0.05
+    optimizer:
+      name: sgd
+      lr: 0.01
+      momentum: 0.0
+      weight_decay: 0.0
+

@@ -77,7 +77,7 @@ class AtMMetricsTests(unittest.TestCase):
             pair_map={0: 1, 1: 0, 2: 3, 3: 2},
             unpaired=[],
         )
-        metrics, pair_rows = compute_matching_metrics(
+        metrics, pair_rows, angle_rows = compute_matching_metrics(
             global_state=global_state,
             client_states=client_states,
             client_gradients=gradients,
@@ -87,8 +87,14 @@ class AtMMetricsTests(unittest.TestCase):
             parameter_names=["weight"],
         )
         self.assertEqual(len(pair_rows), 2)
+        self.assertEqual(len(angle_rows), 1)
         self.assertGreaterEqual(metrics["U_le_A_gap"], -1e-10)
         self.assertLessEqual(metrics["U_t_M"], metrics["A_t_M"] + 1e-10)
+        self.assertAlmostEqual(
+            metrics["U_t_M"],
+            metrics["U_from_residual_expansion"],
+            places=8,
+        )
 
     def test_singleton_groups_preserve_complete_coverage(self) -> None:
         pairing = PairingResult(
@@ -96,7 +102,7 @@ class AtMMetricsTests(unittest.TestCase):
             pair_map={0: 1, 1: 0},
             unpaired=[2],
         )
-        metrics, rows = compute_matching_metrics(
+        metrics, rows, angle_rows = compute_matching_metrics(
             global_state={"weight": torch.tensor([0.0])},
             client_states={
                 0: {"weight": torch.tensor([-0.1])},
@@ -114,8 +120,34 @@ class AtMMetricsTests(unittest.TestCase):
             parameter_names=["weight"],
         )
         self.assertEqual(len(rows), 2)
+        self.assertEqual(len(angle_rows), 1)
         self.assertAlmostEqual(metrics["A_t_M"], 0.0, places=10)
         self.assertAlmostEqual(metrics["U_t_M"], 0.0, places=10)
+
+    def test_opposite_residuals_make_the_universal_lower_bound_zero(self) -> None:
+        pairing = PairingResult(
+            pairs=[(0, 1), (2, 3)],
+            pair_map={0: 1, 1: 0, 2: 3, 3: 2},
+            unpaired=[],
+        )
+        metrics, _, angle_rows = compute_matching_metrics(
+            global_state={"weight": torch.tensor([0.0])},
+            client_states={
+                0: {"weight": torch.tensor([1.0])},
+                1: {"weight": torch.tensor([1.0])},
+                2: {"weight": torch.tensor([-1.0])},
+                3: {"weight": torch.tensor([-1.0])},
+            },
+            client_gradients={client_id: torch.tensor([0.0]) for client_id in range(4)},
+            sample_counts={client_id: 1 for client_id in range(4)},
+            pairing=pairing,
+            gamma=0.1,
+            parameter_names=["weight"],
+        )
+        self.assertAlmostEqual(metrics["A_t_M"], 1.0, places=10)
+        self.assertAlmostEqual(metrics["U_t_M"], 0.0, places=10)
+        self.assertAlmostEqual(angle_rows[0]["cosine"], -1.0, places=10)
+        self.assertFalse(metrics["alignment_assumption_holds"])
 
 
 if __name__ == "__main__":

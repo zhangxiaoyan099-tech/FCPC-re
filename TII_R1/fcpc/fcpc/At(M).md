@@ -697,3 +697,251 @@ w_i^{s+1}
 - 标签 JSDN 在存在条件特征偏斜时仍能完全控制梯度偏差。
 
 本实验的关键价值，就是判断缺失的链条究竟断在 \(R\to H\)、\(H\to A\)，还是 \(A\to U\)，从而决定下一步应优化匹配指标、共同中心，还是本地更新规则。
+
+---
+
+## 15. CIFAR-10 第 5 轮快速审计结果
+
+实验条件为种子 42、第 5 轮中立 FedAvg 检查点、完整 10 客户端参与、两个本地 SGD 步、相同 batch trace。当前快速实验只有 1 个 batch seed 和 3 个随机匹配 seed，因此属于机制诊断，不能作为最终统计结论。
+
+raw 面板以随机匹配均值为基准：
+
+| 配对策略 | \(R\) 变化 | \(H\) 变化 | \(A\) 变化 | \(U\) 变化 |
+|---|---:|---:|---:|---:|
+| optimal | \(-19.5\%\) | \(-27.6\%\) | \(-22.5\%\) | \(+0.033\%\) |
+| similar | \(+5.7\%\) | \(+1.9\%\) | \(-6.5\%\) | \(-0.013\%\) |
+| JSDN | \(-0.5\%\) | \(+29.4\%\) | \(+26.9\%\) | \(+0.076\%\) |
+
+其中：
+
+\[
+A_{\mathrm{random}}=0.00457313,
+\qquad
+A_{\mathrm{optimal}}=0.00354263,
+\]
+
+但：
+
+\[
+U_{\mathrm{random}}=0.00118252,
+\qquad
+U_{\mathrm{optimal}}=0.00118290.
+\]
+
+因此，最大权加权-JS配对在该检查点明显降低了 \(R、H、A\)，但没有降低实际全局更新误差 \(U\)。四种策略的单轮验证准确率变化也完全相同：
+
+\[
+\Delta\operatorname{Acc}_{\mathrm{val}}=1.40625\%.
+\]
+
+该结果不否定 \(U\le A\)，而是说明这个上界在不同配对下具有不同松紧程度。
+
+---
+
+## 16. \(A\)、\(U\) 与残差抵消的精确关系
+
+把所有客户端对及未配对单例统一记为组 \(k\)，组权重为 \(b_k\)，执行残差为：
+
+\[
+r_k=\Delta_k+\gamma g_k,
+\qquad
+\sum_kb_k=1.
+\]
+
+则：
+
+\[
+A=\sum_kb_k\|r_k\|^2,
+\qquad
+U=\left\|\sum_kb_kr_k\right\|^2.
+\]
+
+由加权方差恒等式：
+
+\[
+\boxed{
+A=U+V
+}
+\]
+
+其中：
+
+\[
+V=\sum_kb_k\left\|r_k-\sum_lb_lr_l\right\|^2\ge0.
+\]
+
+因此无条件成立：
+
+\[
+\boxed{0\le U\le A}.
+\]
+
+但不存在仅由正系数 \(A\) 和 \(R\) 构造的普适非零下界。原因是不同 \(r_k\) 可以完全反向抵消，使 \(A>0\) 而 \(U=0\)；同时也可以在 \(R>0\) 时完美执行配对梯度，使 \(A=U=0\)。所以 \(R\) 不能提供 \(U\) 的正下界。
+
+为避免反复使用减法形式，定义残差保留系数：
+
+\[
+\boxed{
+\kappa_t(M)=\frac{U_t(M)}{A_t(M)+\varepsilon}
+}
+\]
+
+则：
+
+\[
+0\le\kappa_t(M)\le1,
+\qquad
+U_t(M)\approx\kappa_t(M)A_t(M).
+\]
+
+本次 raw 快速实验中：
+
+\[
+\kappa_{\mathrm{random}}\approx0.2586,
+\qquad
+\kappa_{\mathrm{optimal}}\approx0.3339.
+\]
+
+optimal 将 \(A\) 降低约 \(22.5\%\)，却使 \(\kappa\) 上升约 \(29\%\)，两种作用基本抵消，因此 \(U=\kappa A\) 几乎不变。
+
+### 16.1 正下界成立的附加条件
+
+展开 \(U\)：
+
+\[
+U
+=
+\sum_kb_k^2\|r_k\|^2
++2\sum_{k<l}b_kb_l\langle r_k,r_l\rangle.
+\]
+
+如果所有不同组的残差内积均非负：
+
+\[
+\langle r_k,r_l\rangle\ge0,
+\qquad k\ne l,
+\]
+
+并记：
+
+\[
+b_{\min}=\min_kb_k,
+\]
+
+则：
+
+\[
+U
+\ge
+\sum_kb_k^2\|r_k\|^2
+\ge
+b_{\min}\sum_kb_k\|r_k\|^2
+=b_{\min}A.
+\]
+
+从而得到条件夹击：
+
+\[
+\boxed{
+b_{\min}A_t(M)
+\le
+U_t(M)
+\le
+A_t(M)
+}.
+\]
+
+如果共有 \(m\) 个等权客户端对，则 \(b_{\min}=1/m\)。10 个客户端组成 5 个等权对时，条件下界为：
+
+\[
+0.2A_t(M)\le U_t(M)\le A_t(M).
+\]
+
+但是，“所有残差内积非负”尚未由当前算法保证，必须先通过残差夹角实验检查。没有这个方向性条件时，普适常数只能取 \(\kappa_{\min}=0\)。
+
+---
+
+## 17. 客户端对残差夹角实验
+
+### 17.1 实验目的
+
+检验下列条件在 CIFAR-10 上是否大部分或全部成立：
+
+\[
+\langle r_k,r_l\rangle\ge0.
+\]
+
+需要区分：
+
+- “大部分内积为正”：只能作为经验现象；
+- “每一次运行的所有内积都非负”：才能支持条件下界；
+- 只要存在负内积，\(b_{\min}A\le U\) 在该次运行中就不能仅靠上述推导保证。
+
+### 17.2 公平设置
+
+- 复用快速实验生成的种子 42、第 5 轮 FedAvg 检查点；
+- 仅使用 raw 面板，先排除 LDP 噪声干扰；
+- 配对策略：optimal、random、similar、JSDN；
+- batch seed：100、101、102、103、104；
+- random pairing seed：0 至 19；
+- 所有方法使用相同客户端历史、数据顺序、学习率、\(\beta\)、中心和 proximal 规则；
+- 继续使用两个本地 SGD 步，以保持 \(\gamma=\eta E\) 的定义准确。
+
+### 17.3 记录指标
+
+对每两个不同客户端组 \(k,l\) 记录：
+
+\[
+\langle r_k,r_l\rangle,
+\qquad
+\cos(r_k,r_l)
+=
+\frac{\langle r_k,r_l\rangle}
+{\|r_k\|\|r_l\|},
+\]
+
+以及它们对 \(U\) 的交叉贡献：
+
+\[
+2b_kb_l\langle r_k,r_l\rangle.
+\]
+
+每次重放汇总：
+
+- 余弦均值、中位数和最小值；
+- 正余弦比例；
+- 非负内积比例；
+- 总交叉项；
+- \(\kappa=U/A\)；
+- \(b_{\min}\)；
+- 所有内积是否均非负；
+- 直接核对 \(U\) 与残差展开重建值是否一致。
+
+### 17.4 服务器命令
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python -u -m scripts.run_at_m_audit \
+  --config configs/at_m/cifar10_residual_angles.yaml \
+  --reuse-checkpoints \
+  2>&1 | tee outputs/at_m_residual_angles.txt
+```
+
+主要输出：
+
+```text
+outputs/at_m_residual_angles/at_m_summary.csv
+outputs/at_m_residual_angles/at_m_residual_angles.csv
+outputs/at_m_residual_angles/at_m_metrics.csv
+```
+
+### 17.5 判断规则
+
+重点检查：
+
+- `residual_inner_product_nonnegative_fraction_mean`；
+- `alignment_assumption_hold_fraction`；
+- `residual_cosine_min`；
+- `residual_cross_term_mean`；
+- `kappa_mean`。
+
+若 `alignment_assumption_hold_fraction = 1` 在多个检查点、模型种子和 batch seed 下稳定成立，才考虑在附加假设下使用 \(\kappa_{\min}=b_{\min}\)。如果只表现为“多数为正”但仍存在负内积，则只能报告经验对齐现象，不能把它写成无条件下界。

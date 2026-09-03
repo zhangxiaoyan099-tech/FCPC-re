@@ -121,6 +121,49 @@ CUDA_VISIBLE_DEVICES=0 python -u -m scripts.run_at_m_audit \
 
 汇总文件还直接给出相对随机匹配的 `R/H/A/U` 差值及 `A/U` 百分比变化；负值表示小于随机匹配均值。
 
+`at_m_residual_angles.csv` 枚举任意两个客户端对执行残差之间的内积、余弦值和它们对全局误差交叉项的贡献。汇总文件中的关键字段为：
+
+- `kappa_mean`：\(\kappa=U/A\)，即残差能量的全局保留比例；
+- `residual_cosine_positive_fraction_mean`：有效余弦中大于零的比例；
+- `residual_inner_product_nonnegative_fraction_mean`：交叉内积非负的比例；
+- `residual_cross_term_mean`：\(U\) 展开式中的总交叉项；
+- `alignment_assumption_hold_fraction`：所有交叉内积均非负的实验比例；
+- `b_min_mean`：最小客户端对聚合权重。
+
+脚本同时验证精确展开：
+
+\[
+U
+=
+\sum_k b_k^2\|r_k\|^2
++2\sum_{k<l}b_kb_l\langle r_k,r_l\rangle.
+\]
+
+只有当所有交叉内积均非负时，才能使用条件下界：
+
+\[
+b_{\min}A\le U\le A.
+\]
+
+### 5. 残差夹角正式诊断
+
+该配置复用快速实验已经生成的第 5 轮检查点，使用 5 个 batch seed 和 20 个随机配对 seed：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python -u -m scripts.run_at_m_audit \
+  --config configs/at_m/cifar10_residual_angles.yaml \
+  --reuse-checkpoints \
+  2>&1 | tee outputs/at_m_residual_angles.txt
+```
+
+完成后首先查看：
+
+```bash
+cat outputs/at_m_residual_angles/at_m_summary.csv
+```
+
+如果 `alignment_assumption_hold_fraction` 接近 1，且 `residual_inner_product_nonnegative_fraction_mean` 在不同 batch seed 和配对策略下稳定接近 1，才有依据继续讨论正的 \(\kappa_{\min}\)。如果这些比例明显低于 1，则无条件下界仍只能取 \(\kappa_{\min}=0\)。
+
 ## 先看哪些字段
 
 按以下顺序检查：

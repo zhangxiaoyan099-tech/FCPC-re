@@ -63,7 +63,23 @@ MAIN_FIELDS = [
     "U_t_M",
     "U_t_normalized",
     "cancellation_ratio_U_over_A",
+    "kappa_U_over_A",
     "U_le_A_gap",
+    "residual_group_count",
+    "residual_angle_count",
+    "residual_cosine_mean",
+    "residual_cosine_median",
+    "residual_cosine_min",
+    "residual_cosine_positive_fraction",
+    "residual_inner_product_positive_fraction",
+    "residual_inner_product_nonnegative_fraction",
+    "residual_diagonal_term",
+    "residual_cross_term",
+    "U_from_residual_expansion",
+    "b_min",
+    "alignment_lower_bound_bmin_A",
+    "alignment_assumption_holds",
+    "U_minus_alignment_lower_bound",
     "global_gradient_norm",
     "global_update_norm",
     "gamma",
@@ -105,6 +121,26 @@ PAIR_FIELDS = [
     "A_contribution",
     "gradient_residual_sq",
     "H_contribution",
+]
+
+ANGLE_FIELDS = [
+    "model_seed",
+    "checkpoint_round",
+    "panel",
+    "pairing_strategy",
+    "pairing_seed",
+    "batch_seed",
+    "group_index_a",
+    "clients_a",
+    "group_index_b",
+    "clients_b",
+    "weight_a",
+    "weight_b",
+    "inner_product",
+    "cosine",
+    "cross_contribution",
+    "inner_product_positive",
+    "inner_product_nonnegative",
 ]
 
 
@@ -570,7 +606,12 @@ def replay_one_round(
     *,
     batch_seed: int,
     device: str,
-) -> tuple[dict[str, Any], list[dict[str, Any]], Mapping[str, object]]:
+) -> tuple[
+    dict[str, Any],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    Mapping[str, object],
+]:
     replay_cfg = config.get("audit", {}).get("replay", {})
     global_state = checkpoint["model_state"]
     previous_states = checkpoint["client_previous_states"]
@@ -699,7 +740,7 @@ def replay_one_round(
         local_states[client_id] = state
         local_metrics.append(metrics)
 
-    metric_values, pair_rows = compute_matching_metrics(
+    metric_values, pair_rows, residual_angle_rows = compute_matching_metrics(
         global_state=global_state,
         client_states=local_states,
         client_gradients=client_gradients,
@@ -744,7 +785,7 @@ def replay_one_round(
         [data["sample_counts"][index] for index in range(int(data["num_clients"]))],
         weighted=True,
     )
-    return metric_values, pair_rows, aggregated_state
+    return metric_values, pair_rows, residual_angle_rows, aggregated_state
 
 
 def aggregate_local_metrics(metrics: list[Mapping[str, Any]]) -> dict[str, float]:
@@ -833,14 +874,19 @@ def run_audit(config: Mapping[str, Any], *, reuse_checkpoints: bool) -> dict[str
     )
     metrics_path = output_dir / "at_m_metrics.csv"
     pairs_path = output_dir / "at_m_pairs.csv"
+    angles_path = output_dir / "at_m_residual_angles.csv"
     all_rows: list[dict[str, Any]] = []
-    with metrics_path.open("w", newline="", encoding="utf-8") as metrics_file, pairs_path.open(
-        "w", newline="", encoding="utf-8"
-    ) as pairs_file:
+    with (
+        metrics_path.open("w", newline="", encoding="utf-8") as metrics_file,
+        pairs_path.open("w", newline="", encoding="utf-8") as pairs_file,
+        angles_path.open("w", newline="", encoding="utf-8") as angles_file,
+    ):
         metrics_writer = csv.DictWriter(metrics_file, fieldnames=MAIN_FIELDS)
         pair_writer = csv.DictWriter(pairs_file, fieldnames=PAIR_FIELDS)
+        angle_writer = csv.DictWriter(angles_file, fieldnames=ANGLE_FIELDS)
         metrics_writer.writeheader()
         pair_writer.writeheader()
+        angle_writer.writeheader()
         for checkpoint_round in checkpoints:
             checkpoint_path = checkpoint_dir / f"fedavg_round_{checkpoint_round:03d}.pt"
             checkpoint = load_neutral_checkpoint(checkpoint_path, signature)
@@ -876,7 +922,12 @@ def run_audit(config: Mapping[str, Any], *, reuse_checkpoints: bool) -> dict[str
                             observed_matrices,
                             seed=pairing_seed,
                         )
-                        metric_values, pair_rows, aggregated_state = replay_one_round(
+                        (
+                            metric_values,
+                            pair_rows,
+                            residual_angle_rows,
+                            aggregated_state,
+                        ) = replay_one_round(
                             config,
                             data,
                             checkpoint,
@@ -940,6 +991,23 @@ def run_audit(config: Mapping[str, Any], *, reuse_checkpoints: bool) -> dict[str
                                 {field: enriched.get(field, "") for field in PAIR_FIELDS}
                             )
                         pairs_file.flush()
+                        for angle_row in residual_angle_rows:
+                            enriched_angle = {
+                                "model_seed": seed,
+                                "checkpoint_round": checkpoint_round,
+                                "panel": panel,
+                                "pairing_strategy": strategy,
+                                "pairing_seed": pairing_seed if strategy == "random" else "",
+                                "batch_seed": batch_seed,
+                                **angle_row,
+                            }
+                            angle_writer.writerow(
+                                {
+                                    field: enriched_angle.get(field, "")
+                                    for field in ANGLE_FIELDS
+                                }
+                            )
+                        angles_file.flush()
                         print(
                             f"audit_result: t={checkpoint_round}, panel={panel}, "
                             f"strategy={strategy}, pairing_seed={pairing_seed}, "
@@ -955,6 +1023,7 @@ def run_audit(config: Mapping[str, Any], *, reuse_checkpoints: bool) -> dict[str
     return {
         "metrics_path": str(metrics_path),
         "pairs_path": str(pairs_path),
+        "residual_angles_path": str(angles_path),
         "summary_path": str(summary_path),
         "correlations_path": str(correlations_path),
         "checkpoint_dir": str(checkpoint_dir),
@@ -982,6 +1051,14 @@ def write_summary(rows: list[Mapping[str, Any]], path: Path) -> None:
         "A_std",
         "U_mean",
         "U_std",
+        "kappa_mean",
+        "residual_cosine_mean",
+        "residual_cosine_min",
+        "residual_cosine_positive_fraction_mean",
+        "residual_inner_product_nonnegative_fraction_mean",
+        "residual_cross_term_mean",
+        "alignment_assumption_hold_fraction",
+        "b_min_mean",
         "val_loss_change_mean",
         "val_acc_change_mean",
         "R_delta_vs_random",
@@ -1022,6 +1099,36 @@ def write_summary(rows: list[Mapping[str, Any]], path: Path) -> None:
                 "A_std": float(np.std([float(row["A_t_M"]) for row in values])),
                 "U_mean": mean_or_zero([float(row["U_t_M"]) for row in values]),
                 "U_std": float(np.std([float(row["U_t_M"]) for row in values])),
+                "kappa_mean": mean_or_zero(
+                    [float(row["kappa_U_over_A"]) for row in values]
+                ),
+                "residual_cosine_mean": mean_finite_or_nan(
+                    [float(row["residual_cosine_mean"]) for row in values]
+                ),
+                "residual_cosine_min": min_finite_or_nan(
+                    [float(row["residual_cosine_min"]) for row in values]
+                ),
+                "residual_cosine_positive_fraction_mean": mean_finite_or_nan(
+                    [
+                        float(row["residual_cosine_positive_fraction"])
+                        for row in values
+                    ]
+                ),
+                "residual_inner_product_nonnegative_fraction_mean": mean_finite_or_nan(
+                    [
+                        float(row["residual_inner_product_nonnegative_fraction"])
+                        for row in values
+                    ]
+                ),
+                "residual_cross_term_mean": mean_or_zero(
+                    [float(row["residual_cross_term"]) for row in values]
+                ),
+                "alignment_assumption_hold_fraction": mean_or_zero(
+                    [float(bool(row["alignment_assumption_holds"])) for row in values]
+                ),
+                "b_min_mean": mean_or_zero(
+                    [float(row["b_min"]) for row in values]
+                ),
                 "val_loss_change_mean": mean_or_zero(
                     [float(row["val_loss_change"]) for row in values]
                 ),
@@ -1181,6 +1288,16 @@ def mean_or_zero(values: Iterable[float]) -> float:
 def mean_or_default(values: Iterable[float], default: float) -> float:
     values = list(values)
     return float(np.mean(values)) if values else float(default)
+
+
+def mean_finite_or_nan(values: Iterable[float]) -> float:
+    finite = [float(value) for value in values if np.isfinite(float(value))]
+    return float(np.mean(finite)) if finite else float("nan")
+
+
+def min_finite_or_nan(values: Iterable[float]) -> float:
+    finite = [float(value) for value in values if np.isfinite(float(value))]
+    return float(min(finite)) if finite else float("nan")
 
 
 def select_device(requested: str) -> str:

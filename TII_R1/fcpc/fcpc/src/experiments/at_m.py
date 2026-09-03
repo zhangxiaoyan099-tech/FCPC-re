@@ -106,7 +106,11 @@ def compute_matching_metrics(
     gamma: float,
     parameter_names: Sequence[str],
     eps: float = 1e-12,
-) -> tuple[dict[str, float], list[dict[str, float | int | str]]]:
+) -> tuple[
+    dict[str, float | bool],
+    list[dict[str, float | int | str]],
+    list[dict[str, float | int | str | bool]],
+]:
     """Compute ``A_t(M)``, ``H_t(M)`` and ``U_t(M)``.
 
     ``client_gradients[i]`` must be the flattened mean empirical gradient of
@@ -149,6 +153,7 @@ def compute_matching_metrics(
     a_value = 0.0
     h_value = 0.0
     pair_rows: list[dict[str, float | int | str]] = []
+    residual_groups: list[tuple[int, tuple[int, ...], float, object, float]] = []
     for group_index, group in enumerate(matching_groups(pairing, client_ids)):
         group_mass = float(sum(weights[client_id] for client_id in group))
         if group_mass <= 0.0:
@@ -177,6 +182,9 @@ def compute_matching_metrics(
         h_contribution = group_mass * gradient_squared
         a_value += a_contribution
         h_value += h_contribution
+        residual_groups.append(
+            (group_index, group, group_mass, execution_residual, execution_squared)
+        )
         pair_rows.append(
             {
                 "group_index": group_index,
@@ -190,11 +198,62 @@ def compute_matching_metrics(
             }
         )
 
+    residual_angle_rows: list[dict[str, float | int | str | bool]] = []
+    residual_diagonal_term = sum(
+        group_mass * group_mass * residual_squared
+        for _, _, group_mass, _, residual_squared in residual_groups
+    )
+    residual_cross_term = 0.0
+    valid_cosines: list[float] = []
+    positive_inner_products = 0
+    nonnegative_inner_products = 0
+    for left_offset, left in enumerate(residual_groups):
+        left_index, left_clients, left_mass, left_residual, left_squared = left
+        for right in residual_groups[left_offset + 1 :]:
+            right_index, right_clients, right_mass, right_residual, right_squared = right
+            inner_product = float(
+                left_residual.detach().cpu().float().reshape(-1).dot(
+                    right_residual.detach().cpu().float().reshape(-1)
+                ).item()
+            )
+            cross_contribution = 2.0 * left_mass * right_mass * inner_product
+            residual_cross_term += cross_contribution
+            denominator_cosine = float((left_squared * right_squared) ** 0.5)
+            cosine = (
+                float(inner_product / denominator_cosine)
+                if denominator_cosine > eps
+                else float("nan")
+            )
+            if np.isfinite(cosine):
+                valid_cosines.append(cosine)
+            if inner_product > 0.0:
+                positive_inner_products += 1
+            if inner_product >= 0.0:
+                nonnegative_inner_products += 1
+            residual_angle_rows.append(
+                {
+                    "group_index_a": left_index,
+                    "clients_a": "-".join(str(client_id) for client_id in left_clients),
+                    "group_index_b": right_index,
+                    "clients_b": "-".join(str(client_id) for client_id in right_clients),
+                    "weight_a": left_mass,
+                    "weight_b": right_mass,
+                    "inner_product": inner_product,
+                    "cosine": cosine,
+                    "cross_contribution": cross_contribution,
+                    "inner_product_positive": inner_product > 0.0,
+                    "inner_product_nonnegative": inner_product >= 0.0,
+                }
+            )
+
     global_update_residual = global_delta + float(gamma) * global_gradient
     u_value = squared_l2(global_update_residual)
     gradient_norm_sq = squared_l2(global_gradient)
     denominator = float(gamma) ** 2 * gradient_norm_sq + float(eps)
-    result = {
+    angle_count = len(residual_angle_rows)
+    b_min = min((group[2] for group in residual_groups), default=0.0)
+    alignment_lower_bound = b_min * a_value
+    result: dict[str, float | bool] = {
         "A_t_M": float(a_value),
         "A_t_normalized": float(a_value / denominator),
         "H_t_M": float(h_value),
@@ -203,9 +262,39 @@ def compute_matching_metrics(
         "global_gradient_norm": float(gradient_norm_sq**0.5),
         "global_update_norm": float(squared_l2(global_delta) ** 0.5),
         "cancellation_ratio_U_over_A": float(u_value / max(a_value, eps)),
+        "kappa_U_over_A": float(u_value / max(a_value, eps)),
         "U_le_A_gap": float(a_value - u_value),
+        "residual_group_count": float(len(residual_groups)),
+        "residual_angle_count": float(angle_count),
+        "residual_cosine_mean": (
+            float(np.mean(valid_cosines)) if valid_cosines else float("nan")
+        ),
+        "residual_cosine_median": (
+            float(np.median(valid_cosines)) if valid_cosines else float("nan")
+        ),
+        "residual_cosine_min": (
+            float(np.min(valid_cosines)) if valid_cosines else float("nan")
+        ),
+        "residual_cosine_positive_fraction": (
+            float(sum(cosine > 0.0 for cosine in valid_cosines) / len(valid_cosines))
+            if valid_cosines
+            else float("nan")
+        ),
+        "residual_inner_product_positive_fraction": (
+            float(positive_inner_products / angle_count) if angle_count else float("nan")
+        ),
+        "residual_inner_product_nonnegative_fraction": (
+            float(nonnegative_inner_products / angle_count) if angle_count else float("nan")
+        ),
+        "residual_diagonal_term": float(residual_diagonal_term),
+        "residual_cross_term": float(residual_cross_term),
+        "U_from_residual_expansion": float(residual_diagonal_term + residual_cross_term),
+        "b_min": float(b_min),
+        "alignment_lower_bound_bmin_A": float(alignment_lower_bound),
+        "alignment_assumption_holds": bool(nonnegative_inner_products == angle_count),
+        "U_minus_alignment_lower_bound": float(u_value - alignment_lower_bound),
     }
-    return result, pair_rows
+    return result, pair_rows, residual_angle_rows
 
 
 def flatten_state_delta(
