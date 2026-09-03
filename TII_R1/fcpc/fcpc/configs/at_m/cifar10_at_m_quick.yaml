@@ -1,0 +1,74 @@
+seed: 42
+
+dataset:
+  name: cifar10
+  num_classes: 10
+  input_channels: 3
+  root: ./data
+  download: false
+  augment: false
+  normalize: true
+
+model:
+  name: resnet18
+
+federated:
+  num_clients: 10
+  batch_size: 64
+  device: cuda
+  num_workers: 2
+  pin_memory: true
+
+partition:
+  mode: dual_skew
+  alpha: 0.1
+  quantity_min_fraction: 0.25
+
+evaluation:
+  validation_fraction: 0.1
+  validation_seed: 10042
+
+audit:
+  checkpoints: [5]
+  panels: [raw, ldp]
+  strategies: [optimal, random, similar, jsdn]
+  batch_seeds: [100]
+  random_pairing_seeds: [0, 1, 2]
+  epsilon: 1.0
+  ldp_seed: 20042
+  lambda_jsdn: 0.3
+
+  # Quick mode estimates g_i(w^t) from at most 20 fixed batches per client.
+  # The formal configuration below uses the complete client dataset.
+  gradient_batch_size: 128
+  gradient_max_batches: 20
+  gradient_num_workers: 2
+  validation_max_batches: 20
+  output_dir: outputs/at_m_quick
+  checkpoint_dir: outputs/at_m_quick/neutral_checkpoints
+
+  warmup:
+    batch_size: 64
+    local_epochs: 1
+    max_batches_per_client: 20
+    num_workers: 2
+    optimizer:
+      name: sgd
+      lr: 0.03
+      momentum: 0.9
+      weight_decay: 0.0005
+
+  replay:
+    batch_size: 64
+    local_steps: 2
+    num_workers: 0
+    beta: 0.01
+    partner_weighting: sample_ratio
+    update_rule: proximal
+    center_max_relative_distance: 0.05
+    optimizer:
+      name: sgd
+      lr: 0.01
+      momentum: 0.0
+      weight_decay: 0.0
+

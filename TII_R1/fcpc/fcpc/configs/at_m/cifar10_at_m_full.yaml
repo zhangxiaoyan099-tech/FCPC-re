@@ -1,0 +1,75 @@
+seed: 42
+
+dataset:
+  name: cifar10
+  num_classes: 10
+  input_channels: 3
+  root: ./data
+  download: false
+  augment: false
+  normalize: true
+
+model:
+  name: resnet18
+
+federated:
+  num_clients: 10
+  batch_size: 64
+  device: cuda
+  num_workers: 4
+  pin_memory: true
+
+partition:
+  mode: dual_skew
+  alpha: 0.1
+  quantity_min_fraction: 0.25
+
+evaluation:
+  validation_fraction: 0.1
+  validation_seed: 10042
+
+audit:
+  checkpoints: [5, 10, 20, 50]
+  panels: [raw, ldp]
+  strategies: [optimal, random, similar, jsdn]
+  batch_seeds: [100, 101, 102, 103, 104]
+  random_pairing_seeds: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+  epsilon: 1.0
+  ldp_seed: 20042
+  lambda_jsdn: 0.3
+
+  # null means every example assigned to the client is used to estimate g_i.
+  gradient_batch_size: 128
+  gradient_max_batches: null
+  gradient_num_workers: 4
+  validation_max_batches: 20
+  output_dir: outputs/at_m_full_seed42
+  checkpoint_dir: outputs/at_m_full_seed42/neutral_checkpoints
+
+  # Neutral trajectory: ordinary full-participation FedAvg, no FCPC term.
+  warmup:
+    batch_size: 64
+    local_epochs: 1
+    max_batches_per_client: null
+    num_workers: 4
+    optimizer:
+      name: sgd
+      lr: 0.03
+      momentum: 0.9
+      weight_decay: 0.0005
+
+  # Controlled one-round replay: equal steps and plain SGD make gamma=eta*E exact.
+  replay:
+    batch_size: 64
+    local_steps: 2
+    num_workers: 0
+    beta: 0.01
+    partner_weighting: sample_ratio
+    update_rule: proximal
+    center_max_relative_distance: 0.05
+    optimizer:
+      name: sgd
+      lr: 0.01
+      momentum: 0.0
+      weight_decay: 0.0
+

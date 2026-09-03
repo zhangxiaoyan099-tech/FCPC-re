@@ -1,0 +1,70 @@
+seed: 42
+
+dataset:
+  name: synthetic
+  num_classes: 4
+  input_channels: 1
+  image_size: 28
+  train_samples: 256
+  test_samples: 64
+  augment: false
+
+model:
+  name: simple_cnn
+
+federated:
+  num_clients: 4
+  batch_size: 8
+  device: cpu
+  num_workers: 0
+
+partition:
+  mode: dual_skew
+  alpha: 0.5
+  quantity_min_fraction: 0.5
+
+evaluation:
+  validation_fraction: 0.2
+  validation_seed: 10042
+
+audit:
+  checkpoints: [1, 2]
+  panels: [raw, ldp]
+  strategies: [optimal, random, similar, jsdn]
+  batch_seeds: [100]
+  random_pairing_seeds: [0, 1]
+  epsilon: 1.0
+  ldp_seed: 20042
+  lambda_jsdn: 0.3
+  gradient_batch_size: 16
+  gradient_max_batches: null
+  gradient_num_workers: 0
+  validation_max_batches: 2
+  output_dir: outputs/at_m_smoke
+  checkpoint_dir: outputs/at_m_smoke/neutral_checkpoints
+
+  warmup:
+    batch_size: 8
+    local_epochs: 1
+    max_batches_per_client: 1
+    num_workers: 0
+    optimizer:
+      name: sgd
+      lr: 0.01
+      momentum: 0.0
+      weight_decay: 0.0
+
+  replay:
+    batch_size: 8
+    local_steps: 1
+    num_workers: 0
+    beta: 0.01
+    partner_weighting: sample_ratio
+    update_rule: proximal
+    center_max_relative_distance: 0.05
+    optimizer:
+      name: sgd
+      lr: 0.01
+      momentum: 0.0
+      weight_decay: 0.0
+
