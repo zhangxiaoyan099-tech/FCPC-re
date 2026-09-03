@@ -297,6 +297,129 @@ def compute_matching_metrics(
     return result, pair_rows, residual_angle_rows
 
 
+def compute_intervention_metrics(
+    *,
+    global_state: Mapping[str, object],
+    client_states: Mapping[int, Mapping[str, object]],
+    fedavg_client_states: Mapping[int, Mapping[str, object]],
+    client_gradients: Mapping[int, object],
+    sample_counts: Mapping[int, float] | Sequence[float],
+    gamma: float,
+    parameter_names: Sequence[str],
+    eps: float = 1e-12,
+) -> dict[str, float]:
+    """Measure the partner mechanism against a matched FedAvg replay.
+
+    The two sets of local endpoints must start from the same frozen model and
+    use the same per-client mini-batch trace.  For client ``i`` we define
+    ``z_i = Delta_i(M) - Delta_i(FedAvg)`` and report both the server-visible
+    norm ``||sum_i a_i z_i||`` and the RMS client-side intervention.  Their
+    gap diagnoses cancellation during aggregation.
+    """
+    import torch
+
+    client_ids = _client_ids(sample_counts)
+    expected = set(client_ids)
+    if set(client_states) != expected:
+        raise ValueError("client_states must contain every audited client exactly once")
+    if set(fedavg_client_states) != expected:
+        raise ValueError(
+            "fedavg_client_states must contain every audited client exactly once"
+        )
+    if set(client_gradients) != expected:
+        raise ValueError("client_gradients must contain every audited client exactly once")
+
+    counts = {
+        client_id: max(float(_value(sample_counts, client_id)), 0.0)
+        for client_id in client_ids
+    }
+    total_count = float(sum(counts.values()))
+    if total_count <= 0.0:
+        raise ValueError("sample counts must have positive total mass")
+    weights = {client_id: counts[client_id] / total_count for client_id in client_ids}
+
+    first_gradient = client_gradients[client_ids[0]].detach().cpu().float().reshape(-1)
+    global_gradient = torch.zeros_like(first_gradient)
+    method_global_delta = torch.zeros_like(first_gradient)
+    fedavg_global_delta = torch.zeros_like(first_gradient)
+    intervention_global = torch.zeros_like(first_gradient)
+    intervention_client_energy = 0.0
+    fedavg_client_update_energy = 0.0
+    for client_id in client_ids:
+        gradient = client_gradients[client_id].detach().cpu().float().reshape(-1)
+        method_delta = flatten_state_delta(
+            client_states[client_id], global_state, parameter_names
+        )
+        fedavg_delta = flatten_state_delta(
+            fedavg_client_states[client_id], global_state, parameter_names
+        )
+        if not (
+            gradient.shape
+            == method_delta.shape
+            == fedavg_delta.shape
+            == first_gradient.shape
+        ):
+            raise ValueError("state and gradient parameter vectors have different shapes")
+        weight = weights[client_id]
+        intervention = method_delta - fedavg_delta
+        global_gradient.add_(gradient, alpha=weight)
+        method_global_delta.add_(method_delta, alpha=weight)
+        fedavg_global_delta.add_(fedavg_delta, alpha=weight)
+        intervention_global.add_(intervention, alpha=weight)
+        intervention_client_energy += weight * squared_l2(intervention)
+        fedavg_client_update_energy += weight * squared_l2(fedavg_delta)
+
+    d_squared = squared_l2(intervention_global)
+    d_value = float(d_squared**0.5)
+    client_rms = float(max(intervention_client_energy, 0.0) ** 0.5)
+    fedavg_update_norm = float(squared_l2(fedavg_global_delta) ** 0.5)
+    fedavg_client_rms = float(max(fedavg_client_update_energy, 0.0) ** 0.5)
+    ideal_step_norm = float(abs(float(gamma)) * squared_l2(global_gradient) ** 0.5)
+
+    fedavg_residual = fedavg_global_delta + float(gamma) * global_gradient
+    method_residual = method_global_delta + float(gamma) * global_gradient
+    fedavg_u = squared_l2(fedavg_residual)
+    method_u = squared_l2(method_residual)
+    correction_inner_product = float(
+        fedavg_residual.dot(intervention_global).item()
+    )
+    residual_norm = float(fedavg_u**0.5)
+    alignment_denominator = d_value * residual_norm
+    correction_alignment = (
+        float(-correction_inner_product / alignment_denominator)
+        if alignment_denominator > eps
+        else float("nan")
+    )
+    correction_gain = float(fedavg_u - method_u)
+    gain_from_identity = float(-2.0 * correction_inner_product - d_squared)
+    if intervention_client_energy <= eps:
+        retention = 0.0
+        cancellation_fraction = 0.0
+    else:
+        retention = float(d_squared / intervention_client_energy)
+        retention = min(max(retention, 0.0), 1.0)
+        cancellation_fraction = float(1.0 - retention)
+
+    return {
+        "D_t_M": d_value,
+        "D_t_normalized": float(d_value / (fedavg_update_norm + eps)),
+        "D_t_normalized_ideal": float(d_value / (ideal_step_norm + eps)),
+        "D_client_rms": client_rms,
+        "D_client_normalized": float(client_rms / (fedavg_client_rms + eps)),
+        "D_retention_ratio": retention,
+        "D_cancellation_fraction": cancellation_fraction,
+        "fedavg_global_update_norm": fedavg_update_norm,
+        "fedavg_client_update_rms": fedavg_client_rms,
+        "fedavg_U_t": float(fedavg_u),
+        "correction_inner_product": correction_inner_product,
+        "correction_alignment_cosine": correction_alignment,
+        "correction_gain_U": correction_gain,
+        "correction_gain_relative": float(correction_gain / (fedavg_u + eps)),
+        "correction_gain_from_identity": gain_from_identity,
+        "correction_identity_gap": float(correction_gain - gain_from_identity),
+    }
+
+
 def flatten_state_delta(
     state: Mapping[str, object],
     reference_state: Mapping[str, object],

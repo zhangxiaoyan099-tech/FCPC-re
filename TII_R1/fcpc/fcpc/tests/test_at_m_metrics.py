@@ -9,7 +9,11 @@ try:
 except ImportError:  # pragma: no cover
     torch = None
 
-from src.experiments.at_m import compute_matching_metrics, pair_mixture_kl_residual
+from src.experiments.at_m import (
+    compute_intervention_metrics,
+    compute_matching_metrics,
+    pair_mixture_kl_residual,
+)
 from src.fcpc.jsdn import build_pair_complementarity_matrix
 from src.fcpc.pairing import PairingResult, pairing_weight
 
@@ -57,6 +61,60 @@ class AtMDistributionTests(unittest.TestCase):
 
 @unittest.skipIf(torch is None, "PyTorch is not installed")
 class AtMMetricsTests(unittest.TestCase):
+
+    def intervention_metrics(self, method_states, fedavg_states, gradients=None):
+        if gradients is None:
+            gradients = {0: torch.tensor([1.0]), 1: torch.tensor([1.0])}
+        return compute_intervention_metrics(
+            global_state={"weight": torch.tensor([0.0])},
+            client_states=method_states,
+            fedavg_client_states=fedavg_states,
+            client_gradients=gradients,
+            sample_counts={0: 1, 1: 1},
+            gamma=0.1,
+            parameter_names=["weight"],
+        )
+
+    def test_zero_intervention_matches_fedavg(self) -> None:
+        fedavg_states = {
+            0: {"weight": torch.tensor([-0.05])},
+            1: {"weight": torch.tensor([-0.05])},
+        }
+        metrics = self.intervention_metrics(fedavg_states, fedavg_states)
+        self.assertAlmostEqual(metrics["D_t_M"], 0.0, places=10)
+        self.assertAlmostEqual(metrics["D_t_normalized"], 0.0, places=10)
+        self.assertAlmostEqual(metrics["correction_gain_U"], 0.0, places=10)
+
+    def test_client_interventions_can_cancel_at_server(self) -> None:
+        fedavg_states = {
+            0: {"weight": torch.tensor([-0.05])},
+            1: {"weight": torch.tensor([-0.05])},
+        }
+        method_states = {
+            0: {"weight": torch.tensor([0.05])},
+            1: {"weight": torch.tensor([-0.15])},
+        }
+        metrics = self.intervention_metrics(method_states, fedavg_states)
+        self.assertGreater(metrics["D_client_rms"], 0.0)
+        self.assertAlmostEqual(metrics["D_t_M"], 0.0, places=7)
+        self.assertAlmostEqual(metrics["D_retention_ratio"], 0.0, places=7)
+        self.assertAlmostEqual(metrics["D_cancellation_fraction"], 1.0, places=7)
+
+    def test_aligned_correction_reduces_global_update_error(self) -> None:
+        # With gamma*g=0.1 and Delta_FA=0, e_FA=0.1.  The method adds
+        # z=-0.05, so it points exactly toward -e_FA and halves the residual.
+        fedavg_states = {
+            0: {"weight": torch.tensor([0.0])},
+            1: {"weight": torch.tensor([0.0])},
+        }
+        method_states = {
+            0: {"weight": torch.tensor([-0.05])},
+            1: {"weight": torch.tensor([-0.05])},
+        }
+        metrics = self.intervention_metrics(method_states, fedavg_states)
+        self.assertAlmostEqual(metrics["correction_alignment_cosine"], 1.0, places=6)
+        self.assertGreater(metrics["correction_gain_U"], 0.0)
+        self.assertAlmostEqual(metrics["correction_identity_gap"], 0.0, places=7)
 
     def test_global_update_error_is_bounded_by_A(self) -> None:
         global_state = {"weight": torch.tensor([0.0, 0.0])}

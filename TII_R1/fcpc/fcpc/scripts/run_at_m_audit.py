@@ -27,7 +27,11 @@ from src.data.partition import (
     validate_complete_partition,
 )
 from src.data.split import stratified_holdout_indices
-from src.experiments.at_m import compute_matching_metrics, pair_mixture_kl_residual
+from src.experiments.at_m import (
+    compute_intervention_metrics,
+    compute_matching_metrics,
+    pair_mixture_kl_residual,
+)
 from src.fcpc.jsdn import metric_matrix
 from src.fcpc.ldp import PrivacyBudget, perturb_client_metadata
 from src.fcpc.pairing import PairingResult, pair_clients, pairing_weight
@@ -62,6 +66,22 @@ MAIN_FIELDS = [
     "A_t_normalized",
     "U_t_M",
     "U_t_normalized",
+    "D_t_M",
+    "D_t_normalized",
+    "D_t_normalized_ideal",
+    "D_client_rms",
+    "D_client_normalized",
+    "D_retention_ratio",
+    "D_cancellation_fraction",
+    "fedavg_global_update_norm",
+    "fedavg_client_update_rms",
+    "fedavg_U_t",
+    "correction_inner_product",
+    "correction_alignment_cosine",
+    "correction_gain_U",
+    "correction_gain_relative",
+    "correction_gain_from_identity",
+    "correction_identity_gap",
     "cancellation_ratio_U_over_A",
     "kappa_U_over_A",
     "U_le_A_gap",
@@ -611,6 +631,7 @@ def replay_one_round(
     list[dict[str, Any]],
     list[dict[str, Any]],
     Mapping[str, object],
+    Mapping[int, Mapping[str, object]],
 ]:
     replay_cfg = config.get("audit", {}).get("replay", {})
     global_state = checkpoint["model_state"]
@@ -785,7 +806,7 @@ def replay_one_round(
         [data["sample_counts"][index] for index in range(int(data["num_clients"]))],
         weighted=True,
     )
-    return metric_values, pair_rows, residual_angle_rows, aggregated_state
+    return metric_values, pair_rows, residual_angle_rows, aggregated_state, local_states
 
 
 def aggregate_local_metrics(metrics: list[Mapping[str, Any]]) -> dict[str, float]:
@@ -897,6 +918,9 @@ def run_audit(config: Mapping[str, Any], *, reuse_checkpoints: bool) -> dict[str
                 checkpoint["model_state"],
                 device,
             )
+            audit_parameter_names = [
+                name for name, _ in model_factory(config, data).named_parameters()
+            ]
             validation_before = evaluate(
                 config,
                 data,
@@ -912,6 +936,26 @@ def run_audit(config: Mapping[str, Any], *, reuse_checkpoints: bool) -> dict[str
                     lambda_jsdn=lambda_jsdn,
                 )
                 for batch_seed in batch_seeds:
+                    fedavg_pairing = PairingResult(
+                        pairs=[],
+                        pair_map={},
+                        unpaired=list(range(int(data["num_clients"]))),
+                    )
+                    (
+                        fedavg_metric_values,
+                        _,
+                        _,
+                        _,
+                        fedavg_local_states,
+                    ) = replay_one_round(
+                        config,
+                        data,
+                        checkpoint,
+                        fedavg_pairing,
+                        gradients,
+                        batch_seed=batch_seed,
+                        device=device,
+                    )
                     jobs = []
                     for strategy in strategies:
                         seeds = random_seeds if strategy == "random" else [seed]
@@ -927,6 +971,7 @@ def run_audit(config: Mapping[str, Any], *, reuse_checkpoints: bool) -> dict[str
                             pair_rows,
                             residual_angle_rows,
                             aggregated_state,
+                            local_states,
                         ) = replay_one_round(
                             config,
                             data,
@@ -936,6 +981,37 @@ def run_audit(config: Mapping[str, Any], *, reuse_checkpoints: bool) -> dict[str
                             batch_seed=batch_seed,
                             device=device,
                         )
+                        intervention_values = compute_intervention_metrics(
+                            global_state=checkpoint["model_state"],
+                            client_states=local_states,
+                            fedavg_client_states=fedavg_local_states,
+                            client_gradients=gradients,
+                            sample_counts=data["sample_counts"],
+                            gamma=float(metric_values["gamma"]),
+                            parameter_names=audit_parameter_names,
+                        )
+                        u_gap = abs(
+                            float(metric_values["U_t_M"])
+                            - float(intervention_values["fedavg_U_t"])
+                            + float(intervention_values["correction_gain_U"])
+                        )
+                        u_tolerance = max(1e-8, 1e-4 * float(metric_values["U_t_M"]))
+                        if u_gap > u_tolerance:
+                            raise AssertionError(
+                                "the intervention identity disagrees with U_t(M); "
+                                "check the matched FedAvg replay"
+                            )
+                        fedavg_u_gap = abs(
+                            float(fedavg_metric_values["U_t_M"])
+                            - float(intervention_values["fedavg_U_t"])
+                        )
+                        if fedavg_u_gap > max(
+                            1e-8, 1e-4 * float(intervention_values["fedavg_U_t"])
+                        ):
+                            raise AssertionError(
+                                "the FedAvg replay residual disagrees with the D_t baseline"
+                            )
+                        metric_values.update(intervention_values)
                         validation_after = evaluate(
                             config,
                             data,
@@ -1012,7 +1088,9 @@ def run_audit(config: Mapping[str, Any], *, reuse_checkpoints: bool) -> dict[str
                             f"audit_result: t={checkpoint_round}, panel={panel}, "
                             f"strategy={strategy}, pairing_seed={pairing_seed}, "
                             f"batch_seed={batch_seed}, R={row['R_M']:.6e}, "
-                            f"A={row['A_t_M']:.6e}, U={row['U_t_M']:.6e}",
+                            f"A={row['A_t_M']:.6e}, U={row['U_t_M']:.6e}, "
+                            f"Dnorm={row['D_t_normalized']:.3%}, "
+                            f"gain={row['correction_gain_U']:+.3e}",
                             flush=True,
                         )
             del gradients
@@ -1051,6 +1129,17 @@ def write_summary(rows: list[Mapping[str, Any]], path: Path) -> None:
         "A_std",
         "U_mean",
         "U_std",
+        "D_mean",
+        "D_normalized_mean",
+        "D_normalized_std",
+        "D_normalized_ideal_mean",
+        "D_client_normalized_mean",
+        "D_retention_ratio_mean",
+        "D_cancellation_fraction_mean",
+        "correction_alignment_cosine_mean",
+        "correction_gain_U_mean",
+        "correction_gain_relative_mean",
+        "correction_gain_positive_fraction",
         "kappa_mean",
         "residual_cosine_mean",
         "residual_cosine_min",
@@ -1099,6 +1188,37 @@ def write_summary(rows: list[Mapping[str, Any]], path: Path) -> None:
                 "A_std": float(np.std([float(row["A_t_M"]) for row in values])),
                 "U_mean": mean_or_zero([float(row["U_t_M"]) for row in values]),
                 "U_std": float(np.std([float(row["U_t_M"]) for row in values])),
+                "D_mean": mean_or_zero([float(row["D_t_M"]) for row in values]),
+                "D_normalized_mean": mean_or_zero(
+                    [float(row["D_t_normalized"]) for row in values]
+                ),
+                "D_normalized_std": float(
+                    np.std([float(row["D_t_normalized"]) for row in values])
+                ),
+                "D_normalized_ideal_mean": mean_or_zero(
+                    [float(row["D_t_normalized_ideal"]) for row in values]
+                ),
+                "D_client_normalized_mean": mean_or_zero(
+                    [float(row["D_client_normalized"]) for row in values]
+                ),
+                "D_retention_ratio_mean": mean_or_zero(
+                    [float(row["D_retention_ratio"]) for row in values]
+                ),
+                "D_cancellation_fraction_mean": mean_or_zero(
+                    [float(row["D_cancellation_fraction"]) for row in values]
+                ),
+                "correction_alignment_cosine_mean": mean_finite_or_nan(
+                    [float(row["correction_alignment_cosine"]) for row in values]
+                ),
+                "correction_gain_U_mean": mean_or_zero(
+                    [float(row["correction_gain_U"]) for row in values]
+                ),
+                "correction_gain_relative_mean": mean_or_zero(
+                    [float(row["correction_gain_relative"]) for row in values]
+                ),
+                "correction_gain_positive_fraction": mean_or_zero(
+                    [float(row["correction_gain_U"] > 0.0) for row in values]
+                ),
                 "kappa_mean": mean_or_zero(
                     [float(row["kappa_U_over_A"]) for row in values]
                 ),
@@ -1160,7 +1280,9 @@ def write_summary(rows: list[Mapping[str, Any]], path: Path) -> None:
             print(
                 f"summary: t={key[0]}, panel={key[1]}, strategy={key[2]}, "
                 f"R={output['R_mean']:.6e}, A={output['A_mean']:.6e}, "
-                f"U={output['U_mean']:.6e}, dval={output['val_acc_change_mean']:+.4f}",
+                f"U={output['U_mean']:.6e}, Dnorm={output['D_normalized_mean']:.3%}, "
+                f"gain={output['correction_gain_U_mean']:+.3e}, "
+                f"dval={output['val_acc_change_mean']:+.4f}",
                 flush=True,
             )
 
@@ -1184,6 +1306,7 @@ def write_correlations(rows: list[Mapping[str, Any]], path: Path) -> None:
         "spearman_R_H",
         "spearman_R_A",
         "spearman_A_U",
+        "spearman_D_correction_gain",
         "spearman_U_val_loss_change",
     ]
     with path.open("w", newline="", encoding="utf-8") as handle:
@@ -1208,6 +1331,10 @@ def write_correlations(rows: list[Mapping[str, Any]], path: Path) -> None:
                     "spearman_A_U": spearman(
                         [float(row["A_t_M"]) for row in values],
                         [float(row["U_t_M"]) for row in values],
+                    ),
+                    "spearman_D_correction_gain": spearman(
+                        [float(row["D_t_normalized"]) for row in values],
+                        [float(row["correction_gain_U"]) for row in values],
                     ),
                     "spearman_U_val_loss_change": spearman(
                         [float(row["U_t_M"]) for row in values],

@@ -1277,3 +1277,93 @@ D_t(M)=
 1. 若 \(D_t(M)\) 很小，说明当前共同中心或 \(\beta\) 对客户端轨迹影响太弱，问题不主要在匹配算法；
 2. 若 \(D_t(M)\) 明显但 \(U_t(M)\) 不降，说明中心确实改变了更新，却没有把更新推向理想全局梯度方向；
 3. 若 \(D_t(M)\) 明显、\(U_t(M)\) 下降且方向余弦提高，才能形成“配对—伙伴正则—更新改善—递推项收紧”的完整证据链。
+
+## 19. 归一化 \(D_t(M)\) 反事实实验
+
+绝对的 \(D_t(M)\) 会随模型规模、学习率和本地步数改变，不能直接判断“大”或“小”。因此在相同冻结检查点、相同客户端批次顺序和相同 SGD 协议下，先重放一轮 FedAvg，再定义：
+
+\[
+z_i(M)=\Delta_i^t(M)-\Delta_i^t(\mathrm{FedAvg}),
+\qquad
+z(M)=\sum_i a_i z_i(M).
+\]
+
+服务器可见的归一化干预为：
+
+\[
+\boxed{
+\widetilde D_{\mathrm{server}}(M)
+=
+\frac{\|z(M)\|}
+{\|\Delta_{\mathrm{FedAvg}}^t\|+\varepsilon}
+}.
+\]
+
+它回答“FCPC 最终把服务器更新改了百分之多少”。同时定义客户端侧归一化干预：
+
+\[
+\widetilde D_{\mathrm{client}}(M)
+=
+\frac{
+\sqrt{\sum_i a_i\|z_i(M)\|^2}
+}{
+\sqrt{\sum_i a_i\|\Delta_i^t(\mathrm{FedAvg})\|^2}+\varepsilon
+}.
+\]
+
+以及干预保留率：
+
+\[
+\rho_D(M)
+=
+\frac{\|\sum_i a_i z_i(M)\|^2}
+{\sum_i a_i\|z_i(M)\|^2+\varepsilon}
+\in[0,1].
+\]
+
+若客户端侧干预明显而 \(\rho_D\) 很小，说明不同客户端的伙伴作用在聚合时互相抵消；这不能解释成共同中心“没有生效”。
+
+令 FedAvg 的全局更新残差为：
+
+\[
+e_{\mathrm{FA}}
+=
+\Delta_{\mathrm{FA}}^t+\gamma\nabla F(w^t).
+\]
+
+则 FCPC 的全局误差变化满足精确恒等式：
+
+\[
+U_t(M)-U_t(\mathrm{FA})
+=
+2\langle e_{\mathrm{FA}},z(M)\rangle+\|z(M)\|^2.
+\]
+
+因此仅有较大的 \(\widetilde D_{\mathrm{server}}\) 并不代表有效；还需要：
+
+\[
+\cos\bigl(z(M),-e_{\mathrm{FA}}\bigr)>0,
+\qquad
+U_t(\mathrm{FA})-U_t(M)>0.
+\]
+
+快速实验运行：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python -u -m scripts.run_at_m_audit \
+  --config configs/at_m/cifar10_d_m_quick.yaml \
+  --reuse-checkpoints \
+  2>&1 | tee outputs/d_m_quick.txt
+
+python -m scripts.summarize_d_m outputs/d_m_quick/at_m_summary.csv
+```
+
+输出的判定顺序为：
+
+1. `D/client` 与 `D/server` 都小：当前共同中心、裁剪或 \(\beta\) 的干预过弱；
+2. `D/client` 明显但 `retained` 很小：干预主要在客户端之间抵消；
+3. `D/server` 明显但 `align <= 0` 或 `U gain <= 0`：更新机制改变了服务器，但方向错误或幅度过强；
+4. 不同配对的 `D/server`、`align` 和 `U gain` 有稳定差异：配对策略确实影响服务器更新；
+5. 只有在固定配对后扫描 \(\beta\)、中心裁剪和 `penalty/proximal`，才能进一步区分共同中心过弱与更新规则本身的问题。
+
+这里不预设一个普适的百分比阈值。首先比较四种配对及多个 batch seed 的均值、标准差和正收益比例；若需要写入论文，再增加模型种子并给出置信区间。
