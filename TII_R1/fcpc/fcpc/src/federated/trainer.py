@@ -20,7 +20,9 @@ from src.data.split import stratified_holdout_indices
 from src.fcpc.jsdn import metric_matrix
 from src.fcpc.pairing import PairingResult, pair_clients
 from src.fcpc.regularizer import (
+    blend_state_centers,
     clip_state_center_to_global,
+    pair_update_proxy_center,
     state_l2_distance,
     state_l2_norm,
     weighted_state_center,
@@ -88,6 +90,10 @@ class Trainer:
             "pairing_strategy": pairing_strategy,
             "reference_strategy": str(fcpc_cfg.get("reference_strategy", "partner")),
             "fcpc_update_rule": str(fcpc_cfg.get("update_rule", "penalty")),
+            "grad_center_mix": float(fcpc_cfg.get("grad_center_mix", 0.0)),
+            "grad_center_step_scale": float(
+                fcpc_cfg.get("grad_center_step_scale", 1.0)
+            ),
             "pairing_matrix_shape": tuple(matrix.shape),
             "jsdn_shape": tuple(matrix.shape),
             "model": model_name,
@@ -273,17 +279,29 @@ class Trainer:
         reference_strategy = str(
             fcpc_cfg.get("reference_strategy", "partner")
         ).lower()
-        if reference_strategy not in {"partner", "pair_center"}:
+        if reference_strategy not in {"partner", "pair_center", "pair_grad_center"}:
             raise ValueError(
-                "fcpc.reference_strategy must be 'partner' or 'pair_center'"
+                "fcpc.reference_strategy must be 'partner', 'pair_center', "
+                "or 'pair_grad_center'"
             )
         fcpc_update_rule = str(fcpc_cfg.get("update_rule", "penalty")).lower()
         if fcpc_update_rule not in {"penalty", "proximal"}:
             raise ValueError("fcpc.update_rule must be 'penalty' or 'proximal'")
-        if fcpc_update_rule == "proximal" and reference_strategy != "pair_center":
+        if fcpc_update_rule == "proximal" and reference_strategy not in {
+            "pair_center",
+            "pair_grad_center",
+        }:
             raise ValueError(
-                "fcpc.update_rule='proximal' requires reference_strategy='pair_center'"
+                "fcpc.update_rule='proximal' requires a pair-center reference"
             )
+        grad_center_mix = float(fcpc_cfg.get("grad_center_mix", 0.5))
+        grad_center_step_scale = float(
+            fcpc_cfg.get("grad_center_step_scale", 1.0)
+        )
+        if not 0.0 <= grad_center_mix <= 1.0:
+            raise ValueError("fcpc.grad_center_mix must be in [0, 1]")
+        if grad_center_step_scale < 0.0:
+            raise ValueError("fcpc.grad_center_step_scale must be non-negative")
         if use_fcpc:
             server.build_pairing(
                 epsilon=float(fcpc_cfg.get("epsilon", 1.0)),
@@ -307,6 +325,10 @@ class Trainer:
                 "pairing_metric",
                 "reference_strategy",
                 "fcpc_update_rule",
+                "grad_center_mix",
+                "grad_center_step_scale",
+                "mean_grad_proxy_distance",
+                "grad_proxy_available_fraction",
                 "center_clip_limit",
                 "mean_center_distance",
                 "mean_center_clip_scale",
@@ -407,7 +429,8 @@ class Trainer:
         cumulative_total_bytes = 0
 
         max_eval_batches = federated.get("max_eval_batches")
-        test_every_round = bool(
+        evaluate_test = bool(evaluation_cfg.get("evaluate_test", True))
+        test_every_round = evaluate_test and bool(
             evaluation_cfg.get("test_every_round", validation_loader is None)
         )
         best_val_acc = float("-inf")
@@ -455,6 +478,10 @@ class Trainer:
                 client_id: clients[client_id].previous_state
                 for client_id in selected
             }
+            previous_global_states = {
+                client_id: clients[client_id].previous_global_state
+                for client_id in selected
+            }
             global_parameter_norm = state_l2_norm(
                 global_state,
                 parameter_names=parameter_names,
@@ -498,20 +525,52 @@ class Trainer:
             reference_states = {}
             center_distances = []
             center_clip_scales = []
+            grad_proxy_distances = []
+            grad_proxy_available_clients = 0
             center_clip_limit = self._resolve_distance_limit(
                 fcpc_cfg.get("center_max_distance"),
                 fcpc_cfg.get("center_max_relative_distance"),
                 global_parameter_norm,
             )
-            if reference_strategy == "pair_center":
+            if reference_strategy in {"pair_center", "pair_grad_center"}:
                 for client_a, client_b in pairing.pairs:
-                    center = weighted_state_center(
+                    history_center = weighted_state_center(
                         previous_states.get(client_a),
                         previous_states.get(client_b),
                         clients[client_a].sample_count,
                         clients[client_b].sample_count,
                         fallback_state=global_state,
                     )
+                    center = history_center
+                    if reference_strategy == "pair_grad_center":
+                        for client_id in (client_a, client_b):
+                            if (
+                                previous_states.get(client_id) is not None
+                                and previous_global_states.get(client_id) is not None
+                            ):
+                                grad_proxy_available_clients += 1
+                        gradient_center = pair_update_proxy_center(
+                            previous_states.get(client_a),
+                            previous_states.get(client_b),
+                            previous_global_states.get(client_a),
+                            previous_global_states.get(client_b),
+                            clients[client_a].sample_count,
+                            clients[client_b].sample_count,
+                            global_state,
+                            step_scale=grad_center_step_scale,
+                        )
+                        grad_proxy_distances.append(
+                            state_l2_distance(
+                                gradient_center,
+                                global_state,
+                                parameter_names=parameter_names,
+                            )
+                        )
+                        center = blend_state_centers(
+                            history_center,
+                            gradient_center,
+                            gradient_mix=grad_center_mix,
+                        )
                     center, center_distance, clip_scale = clip_state_center_to_global(
                         center,
                         global_state,
@@ -534,7 +593,7 @@ class Trainer:
                 for client_id in selected:
                     client = clients[client_id]
                     pair_id = pairing.pair_map.get(client_id)
-                    if reference_strategy == "pair_center":
+                    if reference_strategy in {"pair_center", "pair_grad_center"}:
                         paired_previous = reference_states.get(client_id)
                     else:
                         paired_previous = previous_states.get(pair_id) if pair_id is not None else None
@@ -637,7 +696,9 @@ class Trainer:
                             key: value.detach().cpu().clone()
                             for key, value in global_state.items()
                         }
-                should_test = test_every_round or round_idx == rounds - 1
+                should_test = evaluate_test and (
+                    test_every_round or round_idx == rounds - 1
+                )
                 round_test_metrics = {"test_loss": "", "test_acc": ""}
                 if should_test:
                     final_test_metrics = self.evaluate(
@@ -671,6 +732,24 @@ class Trainer:
                     "pairing_metric": server.pairing_metric,
                     "reference_strategy": reference_strategy,
                     "fcpc_update_rule": fcpc_update_rule,
+                    "grad_center_mix": (
+                        grad_center_mix
+                        if reference_strategy == "pair_grad_center"
+                        else 0.0
+                    ),
+                    "grad_center_step_scale": (
+                        grad_center_step_scale
+                        if reference_strategy == "pair_grad_center"
+                        else 0.0
+                    ),
+                    "mean_grad_proxy_distance": (
+                        float(np.mean(grad_proxy_distances))
+                        if grad_proxy_distances else 0.0
+                    ),
+                    "grad_proxy_available_fraction": (
+                        grad_proxy_available_clients / (2.0 * len(pairing.pairs))
+                        if pairing.pairs else 0.0
+                    ),
                     "center_clip_limit": (
                         "" if center_clip_limit is None else center_clip_limit
                     ),
@@ -739,12 +818,13 @@ class Trainer:
         selected_test_metrics = last_test_metrics
         if best_global_state is not None:
             model.load_state_dict(best_global_state)
-            selected_test_metrics = self.evaluate(
-                model,
-                test_loader,
-                device=device,
-                max_batches=max_eval_batches,
-            )
+            if evaluate_test:
+                selected_test_metrics = self.evaluate(
+                    model,
+                    test_loader,
+                    device=device,
+                    max_batches=max_eval_batches,
+                )
             save_checkpoint(
                 {
                     "model_state": best_global_state,

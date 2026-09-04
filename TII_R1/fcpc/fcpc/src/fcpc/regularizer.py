@@ -51,6 +51,114 @@ def weighted_state_center(
     return center
 
 
+def pair_update_proxy_center(
+    state_a: Mapping[str, object] | None,
+    state_b: Mapping[str, object] | None,
+    start_state_a: Mapping[str, object] | None,
+    start_state_b: Mapping[str, object] | None,
+    count_a: float,
+    count_b: float,
+    global_state: Mapping[str, object],
+    *,
+    step_scale: float = 1.0,
+) -> dict[str, object]:
+    """Extrapolate a pair's previous update direction from ``global_state``.
+
+    ``state_x - start_state_x`` is the update produced the last time client
+    ``x`` trained.  Its sample-weighted pair average is a stale, communication-
+    free proxy for a negative pair gradient.  Missing histories contribute a
+    zero update rather than an uncalibrated displacement from the current
+    global model.  Because a previous endpoint can already include momentum,
+    weight decay, and FCPC regularization, this is an optimization-direction
+    proxy rather than an unbiased task-gradient estimator.
+    """
+    step_scale = float(step_scale)
+    if step_scale < 0.0:
+        raise ValueError("step_scale must be non-negative")
+    count_a = max(float(count_a), 0.0)
+    count_b = max(float(count_b), 0.0)
+    denominator = count_a + count_b
+    theta = 0.5 if denominator <= 0.0 else count_a / denominator
+
+    center: dict[str, object] = {}
+    for name, global_value in global_state.items():
+        compatible_global = (
+            hasattr(global_value, "shape")
+            and hasattr(global_value, "is_floating_point")
+            and global_value.is_floating_point()
+        )
+        if compatible_global:
+            pair_update = global_value.detach().cpu().float().new_zeros(
+                global_value.shape
+            )
+            for weight, endpoint, start in (
+                (theta, state_a, start_state_a),
+                (1.0 - theta, state_b, start_state_b),
+            ):
+                if endpoint is None or start is None:
+                    continue
+                endpoint_value = endpoint.get(name)
+                start_value = start.get(name)
+                if endpoint_value is None or start_value is None:
+                    continue
+                if not hasattr(endpoint_value, "shape") or not hasattr(start_value, "shape"):
+                    continue
+                if tuple(endpoint_value.shape) != tuple(global_value.shape):
+                    continue
+                if tuple(start_value.shape) != tuple(global_value.shape):
+                    continue
+                pair_update.add_(
+                    endpoint_value.detach().cpu().float()
+                    - start_value.detach().cpu().float(),
+                    alpha=float(weight),
+                )
+            center[name] = (
+                global_value.detach().cpu().float()
+                + step_scale * pair_update
+            ).to(dtype=global_value.dtype).clone()
+        elif hasattr(global_value, "detach"):
+            center[name] = global_value.detach().cpu().clone()
+        else:
+            center[name] = global_value
+    return center
+
+
+def blend_state_centers(
+    history_center: Mapping[str, object],
+    gradient_center: Mapping[str, object],
+    *,
+    gradient_mix: float,
+) -> dict[str, object]:
+    """Interpolate historical and gradient-proxy centers in parameter space."""
+    gradient_mix = float(gradient_mix)
+    if not 0.0 <= gradient_mix <= 1.0:
+        raise ValueError("gradient_mix must be in [0, 1]")
+    blended: dict[str, object] = {}
+    for name, history_value in history_center.items():
+        gradient_value = gradient_center.get(name, history_value)
+        compatible_float = (
+            hasattr(history_value, "shape")
+            and hasattr(gradient_value, "shape")
+            and tuple(history_value.shape) == tuple(gradient_value.shape)
+            and hasattr(history_value, "is_floating_point")
+            and history_value.is_floating_point()
+        )
+        if compatible_float:
+            gradient_value = gradient_value.to(
+                device=history_value.device,
+                dtype=history_value.dtype,
+            )
+            blended[name] = (
+                (1.0 - gradient_mix) * history_value
+                + gradient_mix * gradient_value
+            ).detach().cpu().clone()
+        elif hasattr(history_value, "detach"):
+            blended[name] = history_value.detach().cpu().clone()
+        else:
+            blended[name] = history_value
+    return blended
+
+
 def fcpc_regularization(
     current_parameters: Mapping[str, object],
     paired_previous_state: Mapping[str, object] | None,

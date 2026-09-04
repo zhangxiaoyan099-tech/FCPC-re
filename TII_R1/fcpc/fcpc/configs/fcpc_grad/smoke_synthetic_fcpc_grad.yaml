@@ -1,0 +1,48 @@
+{
+  "seed": 42,
+  "dataset": {
+    "name": "synthetic",
+    "num_classes": 10,
+    "input_channels": 1,
+    "image_size": 28,
+    "train_samples": 128,
+    "test_samples": 32
+  },
+  "model": {"name": "simple_cnn"},
+  "federated": {
+    "num_clients": 4,
+    "clients_per_round": 4,
+    "rounds": 3,
+    "local_epochs": 1,
+    "batch_size": 8,
+    "max_batches_per_client": 1,
+    "max_eval_batches": 1,
+    "aggregation": "weighted",
+    "device": "cpu"
+  },
+  "partition": {"mode": "dual_skew", "alpha": 0.5},
+  "algorithm": {"name": "fedavg"},
+  "fcpc": {
+    "enabled": true,
+    "metric": "pair_complementarity",
+    "reference_strategy": "pair_grad_center",
+    "update_rule": "proximal",
+    "beta": 0.05,
+    "beta_schedule": "constant",
+    "min_beta": 0.0,
+    "epsilon": 1.0,
+    "pairing_strategy": "optimal",
+    "partner_weighting": "uniform",
+    "grad_center_mix": 0.5,
+    "grad_center_step_scale": 0.5,
+    "center_max_relative_distance": 0.05
+  },
+  "optimizer": {"name": "sgd", "lr": 0.01},
+  "evaluation": {"validation_fraction": 0.1, "validation_seed": 10042},
+  "profiling": {"sample_interval_s": 0.02},
+  "logging": {
+    "output_dir": "outputs/fcpc_grad_smoke",
+    "checkpoint_dir": "outputs/fcpc_grad_smoke",
+    "run_name": "smoke_synthetic_fcpc_grad"
+  }
+}

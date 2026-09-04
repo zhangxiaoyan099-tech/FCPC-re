@@ -9,8 +9,10 @@ except ImportError:  # pragma: no cover - exercised only in minimal environments
 
 from src.algorithms.fedprox import FedProxAdapter
 from src.fcpc.regularizer import (
+    blend_state_centers,
     clip_state_center_to_global,
     fcpc_regularization,
+    pair_update_proxy_center,
     proximal_center_step,
     state_l2_distance,
     weighted_state_center,
@@ -19,6 +21,51 @@ from src.fcpc.regularizer import (
 
 @unittest.skipIf(torch is None, "PyTorch is not installed")
 class RegularizerGradientTests(unittest.TestCase):
+    def test_pair_update_proxy_center_uses_previous_local_updates(self) -> None:
+        global_state = {"weight": torch.tensor([10.0])}
+        center = pair_update_proxy_center(
+            state_a={"weight": torch.tensor([8.0])},
+            state_b={"weight": torch.tensor([12.0])},
+            start_state_a={"weight": torch.tensor([10.0])},
+            start_state_b={"weight": torch.tensor([10.0])},
+            count_a=3,
+            count_b=1,
+            global_state=global_state,
+            step_scale=2.0,
+        )
+
+        # Weighted previous update = 0.75*(-2) + 0.25*(2) = -1.
+        self.assertTrue(torch.allclose(center["weight"], torch.tensor([8.0])))
+
+    def test_pair_update_proxy_missing_history_is_zero_update(self) -> None:
+        global_state = {"weight": torch.tensor([3.0])}
+        center = pair_update_proxy_center(
+            state_a={"weight": torch.tensor([100.0])},
+            state_b=None,
+            start_state_a=None,
+            start_state_b=None,
+            count_a=1,
+            count_b=1,
+            global_state=global_state,
+            step_scale=1.0,
+        )
+        self.assertTrue(torch.equal(center["weight"], global_state["weight"]))
+
+    def test_blended_center_interpolates_history_and_gradient_centers(self) -> None:
+        blended = blend_state_centers(
+            {"weight": torch.tensor([9.0])},
+            {"weight": torch.tensor([8.0])},
+            gradient_mix=0.25,
+        )
+        self.assertTrue(torch.allclose(blended["weight"], torch.tensor([8.75])))
+
+        with self.assertRaisesRegex(ValueError, "gradient_mix"):
+            blend_state_centers(
+                {"weight": torch.tensor([9.0])},
+                {"weight": torch.tensor([8.0])},
+                gradient_mix=1.5,
+            )
+
     def test_weighted_pair_center_uses_sample_counts(self) -> None:
         state_a = {
             "weight": torch.tensor([1.0, 3.0]),

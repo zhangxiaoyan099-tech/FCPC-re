@@ -15,6 +15,7 @@ class Client:
     sample_count: int = 0
     label_histogram: np.ndarray | None = None
     previous_state: Mapping[str, object] | None = field(default=None, init=False)
+    previous_global_state: Mapping[str, object] | None = field(default=None, init=False)
 
     def local_train(
         self,
@@ -145,6 +146,14 @@ class Client:
 
             self.previous_state = {
                 k: v.detach().cpu().clone() for k, v in model.state_dict().items()
+            }
+            # The server already knows the model broadcast to this client.
+            # Retaining it lets FCPC-grad reconstruct the client's previous
+            # update without an additional gradient/model upload.
+            self.previous_global_state = {
+                k: v.detach().cpu().clone()
+                for k, v in global_state.items()
+                if hasattr(v, "detach")
             }
             algorithm.after_local_train(
                 client_id=self.client_id,

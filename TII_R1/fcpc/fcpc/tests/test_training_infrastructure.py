@@ -67,6 +67,10 @@ class ClientMetricTests(unittest.TestCase):
         )
 
         self.assertIn("weight", state)
+        self.assertIsNotNone(client.previous_global_state)
+        self.assertTrue(
+            torch.equal(client.previous_global_state["weight"], global_state["weight"])
+        )
         self.assertEqual(metrics["processed_examples"], 8)
         self.assertEqual(metrics["processed_batches"], 2)
         self.assertGreater(metrics["task_loss"], 0.0)
