@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from scripts.run_fcpc_grad_convergence import _fcpc_grad_override
+from scripts.run_cifar10_full_comparison import ALL_METHODS, METHOD_OVERRIDES
 from scripts.run_fcpc_grad_tuning import (
     BASE_CONFIG,
     _build_config,
@@ -69,6 +70,15 @@ class FCPCGradTuningTests(unittest.TestCase):
         self.assertEqual(override["fcpc"]["reference_strategy"], "pair_grad_center")
         self.assertEqual(override["fcpc"]["beta"], 0.05)
         self.assertEqual(override["fcpc"]["grad_center_mix"], 0.5)
+
+    def test_unified_comparison_contains_selected_fcpc_grad(self) -> None:
+        self.assertIn("fcpc_grad", ALL_METHODS)
+        fcpc = METHOD_OVERRIDES["fcpc_grad"]["fcpc"]
+        self.assertEqual(fcpc["reference_strategy"], "pair_grad_center")
+        self.assertEqual(fcpc["update_rule"], "proximal")
+        self.assertEqual(fcpc["beta"], 0.2)
+        self.assertEqual(fcpc["grad_center_mix"], 1.0)
+        self.assertEqual(fcpc["grad_center_step_scale"], 0.5)
 
 
 class FCPCGradSummaryTests(unittest.TestCase):

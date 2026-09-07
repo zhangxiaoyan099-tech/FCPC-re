@@ -15,7 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 BASE_CONFIG = REPO_ROOT / "configs" / "cifar10_full_comparison_base.yaml"
 OUTPUT_ROOT = REPO_ROOT / "outputs" / "cifar10_full_comparison"
 
-CORE_METHODS = ("fedavg", "fedprox", "original_fcpc", "new_fcpc")
+CORE_METHODS = ("fedavg", "fedprox", "original_fcpc", "new_fcpc", "fcpc_grad")
 ALL_METHODS = (
     "fedavg",
     "fedprox",
@@ -25,6 +25,7 @@ ALL_METHODS = (
     "fedcfa",
     "original_fcpc",
     "new_fcpc",
+    "fcpc_grad",
 )
 
 METHOD_OVERRIDES = {
@@ -97,6 +98,25 @@ METHOD_OVERRIDES = {
             "partner_weighting": "uniform",
         },
     },
+    "fcpc_grad": {
+        "algorithm": {"name": "fedavg"},
+        "fcpc": {
+            "enabled": True,
+            "metric": "pair_complementarity",
+            "reference_strategy": "pair_grad_center",
+            "update_rule": "proximal",
+            # Selected on development seed 42 using Val-AUC@50 only.
+            "beta": 0.2,
+            "beta_schedule": "cosine_decay",
+            "min_beta": 0.0,
+            "epsilon": 1.0,
+            "pairing_strategy": "optimal",
+            "partner_weighting": "uniform",
+            "grad_center_mix": 1.0,
+            "grad_center_step_scale": 0.5,
+            "center_max_relative_distance": 0.05,
+        },
+    },
 }
 
 
@@ -166,8 +186,11 @@ def main() -> None:
     if not seeds:
         raise ValueError("at least one seed is required")
 
-    gpu_name, cuda_version = _require_cuda()
-    print(f"GPU required and detected: {gpu_name}; torch CUDA: {cuda_version}", flush=True)
+    if args.dry_run:
+        print("Dry run: CUDA availability is not required.", flush=True)
+    else:
+        gpu_name, cuda_version = _require_cuda()
+        print(f"GPU required and detected: {gpu_name}; torch CUDA: {cuda_version}", flush=True)
     base = json.loads(BASE_CONFIG.read_text(encoding="utf-8"))
     resolved_dir = OUTPUT_ROOT / "resolved_configs"
     console_dir = OUTPUT_ROOT / "console"
