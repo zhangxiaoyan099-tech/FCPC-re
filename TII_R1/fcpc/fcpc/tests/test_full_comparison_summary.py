@@ -16,7 +16,18 @@ class FullComparisonSummaryTests(unittest.TestCase):
             with csv_path.open("w", newline="", encoding="utf-8") as handle:
                 writer = csv.DictWriter(
                     handle,
-                    fieldnames=["round", "val_acc", "round_time_s", "cumulative_total_bytes"],
+                    fieldnames=[
+                        "round",
+                        "val_acc",
+                        "round_time_s",
+                        "cumulative_total_bytes",
+                        "process_cpu_mean_pct",
+                        "process_cpu_peak_pct",
+                        "rss_peak_mib",
+                        "gpu_util_mean_pct",
+                        "gpu_util_peak_pct",
+                        "gpu_memory_peak_mib",
+                    ],
                 )
                 writer.writeheader()
                 writer.writerows(
@@ -33,6 +44,9 @@ class FullComparisonSummaryTests(unittest.TestCase):
         self.assertEqual(row["clients_per_round"], 6)
         self.assertAlmostEqual(row["val_auc_50"], 0.4)
         self.assertEqual(row["round_to_0.5"], 3)
+        self.assertEqual(row["time_to_0.5_s"], 6.0)
+        self.assertEqual(row["bytes_to_0.5"], 30.0)
+        self.assertEqual(row["mean_round_time_s"], 2.0)
         self.assertEqual(row["total_round_time_s"], 6.0)
         self.assertEqual(row["total_bytes"], 30.0)
 

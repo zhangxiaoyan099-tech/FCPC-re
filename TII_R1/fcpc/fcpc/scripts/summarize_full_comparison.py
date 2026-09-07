@@ -76,6 +76,11 @@ def _sample_std(values: list[float]) -> float:
     return math.sqrt(sum((value - center) ** 2 for value in finite) / (len(finite) - 1))
 
 
+def _float_or_zero(row: dict, field: str) -> float:
+    value = row.get(field)
+    return float(value) if value not in (None, "") else 0.0
+
+
 def summarize_run(csv_path: Path, console_dir: Path, thresholds: list[float]) -> dict:
     match = RUN_PATTERN.match(csv_path.stem)
     if not match:
@@ -84,11 +89,13 @@ def summarize_run(csv_path: Path, console_dir: Path, thresholds: list[float]) ->
         rows = list(csv.DictReader(handle))
     if not rows:
         raise ValueError(f"empty comparison CSV: {csv_path}")
-    val_acc = [float(row["val_acc"]) for row in rows if row.get("val_acc") not in (None, "")]
+    val_rows = [row for row in rows if row.get("val_acc") not in (None, "")]
+    val_acc = [float(row["val_acc"]) for row in val_rows]
     if not val_acc:
         raise ValueError(f"no validation curve in {csv_path}")
     best_index = max(range(len(val_acc)), key=val_acc.__getitem__)
     last_row = rows[-1]
+    round_times = [_float_or_zero(row, "round_time_s") for row in rows]
     output = {
         "method": match.group("method"),
         "seed": int(match.group("seed")),
@@ -102,11 +109,39 @@ def summarize_run(csv_path: Path, console_dir: Path, thresholds: list[float]) ->
         "last_val_acc": val_acc[-1],
         "selected_test_acc": _console_value(console_dir / f"{csv_path.stem}.log", "test_acc"),
         "last_test_acc": _console_value(console_dir / f"{csv_path.stem}.log", "last_test_acc"),
-        "total_round_time_s": sum(float(row["round_time_s"]) for row in rows),
+        "mean_round_time_s": sum(round_times) / len(round_times),
+        "total_round_time_s": sum(round_times),
         "total_bytes": float(last_row.get("cumulative_total_bytes") or 0.0),
+        "bytes_per_round": float(last_row.get("cumulative_total_bytes") or 0.0) / len(rows),
+        "process_cpu_mean_pct": _mean(
+            [_float_or_zero(row, "process_cpu_mean_pct") for row in rows]
+        ),
+        "process_cpu_peak_pct": max(
+            _float_or_zero(row, "process_cpu_peak_pct") for row in rows
+        ),
+        "rss_peak_mib": max(_float_or_zero(row, "rss_peak_mib") for row in rows),
+        "gpu_util_mean_pct": _mean(
+            [_float_or_zero(row, "gpu_util_mean_pct") for row in rows]
+        ),
+        "gpu_util_peak_pct": max(
+            _float_or_zero(row, "gpu_util_peak_pct") for row in rows
+        ),
+        "gpu_memory_peak_mib": max(
+            _float_or_zero(row, "gpu_memory_peak_mib") for row in rows
+        ),
     }
     for threshold in thresholds:
-        output[f"round_to_{threshold:g}"] = _first_round_at(val_acc, threshold)
+        threshold_round = _first_round_at(val_acc, threshold)
+        output[f"round_to_{threshold:g}"] = threshold_round
+        if isinstance(threshold_round, int):
+            threshold_index = threshold_round - 1
+            output[f"time_to_{threshold:g}_s"] = sum(round_times[:threshold_round])
+            output[f"bytes_to_{threshold:g}"] = float(
+                val_rows[threshold_index].get("cumulative_total_bytes") or 0.0
+            )
+        else:
+            output[f"time_to_{threshold:g}_s"] = ""
+            output[f"bytes_to_{threshold:g}"] = ""
     return output
 
 
@@ -140,7 +175,7 @@ def main() -> None:
         grouped[str(row["method"])].append(row)
     print(
         f"{'method':<20} {'n':>3} {'AUC50':>15} {'AUC100':>15} "
-        f"{'best val':>15} {'selected test':>15} {'time(h)':>12}"
+        f"{'best val':>15} {'selected test':>15} {'sec/round':>12} {'total GB':>12}"
     )
     for method in sorted(grouped):
         values = grouped[method]
@@ -148,12 +183,14 @@ def main() -> None:
         for field in ("val_auc_50", "val_auc_100", "best_val_acc", "selected_test_acc"):
             raw = [float(row[field]) for row in values]
             columns.append(f"{100 * _mean(raw):6.2f}+/-{100 * _sample_std(raw):5.2f}")
-        hours = [float(row["total_round_time_s"]) / 3600.0 for row in values]
-        time_text = f"{_mean(hours):5.2f}+/-{_sample_std(hours):4.2f}"
+        seconds_per_round = [float(row["mean_round_time_s"]) for row in values]
+        total_gb = [float(row["total_bytes"]) / 1e9 for row in values]
+        time_text = f"{_mean(seconds_per_round):5.2f}+/-{_sample_std(seconds_per_round):4.2f}"
+        bytes_text = f"{_mean(total_gb):5.2f}+/-{_sample_std(total_gb):4.2f}"
         print(
             f"{method:<20} {len(values):>3} "
             + " ".join(f"{value:>15}" for value in columns)
-            + f" {time_text:>12}"
+            + f" {time_text:>12} {bytes_text:>12}"
         )
     print(f"summary_path: {output_path}")
 

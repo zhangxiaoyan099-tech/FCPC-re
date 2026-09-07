@@ -93,7 +93,7 @@ python -m scripts.summarize_full_comparison \
 outputs/cifar10_full_comparison/comparison_summary.csv
 ```
 
-主要比较 Val-AUC@50、Val-AUC@100、达到各准确率阈值的轮数、验证集选择的测试准确率、最后一轮准确率、总时间和通信量。
+主要比较 Val-AUC@50、Val-AUC@100、达到各准确率阈值的轮数、时间和累计通信量，以及验证集选择的测试准确率、最后一轮准确率、每轮时间、CPU/GPU利用率和峰值内存。
 
 ## 6. 结果边界
 
