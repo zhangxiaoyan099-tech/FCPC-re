@@ -28,10 +28,39 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--console-dir", default="outputs/cifar10_full_comparison/console")
     parser.add_argument("--thresholds", default="0.50,0.60,0.65,0.70")
     parser.add_argument(
+        "--seeds",
+        default="",
+        help="optional comma-separated seed filter, e.g. 45 or 45,46,47",
+    )
+    parser.add_argument("--rounds", type=int, default=None)
+    parser.add_argument("--clients-per-round", type=int, default=None)
+    parser.add_argument(
         "--output",
         default="outputs/cifar10_full_comparison/comparison_summary.csv",
     )
     return parser.parse_args()
+
+
+def _selected_paths(
+    log_dir: Path,
+    *,
+    seeds: set[int],
+    rounds: int | None,
+    clients_per_round: int | None,
+) -> list[Path]:
+    selected = []
+    for path in sorted(log_dir.glob("cifar10_full_a0p1_cpr*_r*_seed*.csv")):
+        match = RUN_PATTERN.match(path.stem)
+        if not match:
+            continue
+        if seeds and int(match.group("seed")) not in seeds:
+            continue
+        if rounds is not None and int(match.group("rounds")) != rounds:
+            continue
+        if clients_per_round is not None and int(match.group("cpr")) != clients_per_round:
+            continue
+        selected.append(path)
+    return selected
 
 
 def _mean(values: list[float]) -> float:
@@ -84,11 +113,17 @@ def summarize_run(csv_path: Path, console_dir: Path, thresholds: list[float]) ->
 def main() -> None:
     args = _parse_args()
     thresholds = [float(item.strip()) for item in args.thresholds.split(",") if item.strip()]
+    seeds = {int(item.strip()) for item in args.seeds.split(",") if item.strip()}
     log_dir = Path(args.log_dir)
     console_dir = Path(args.console_dir)
     rows = [
         summarize_run(path, console_dir, thresholds)
-        for path in sorted(log_dir.glob("cifar10_full_a0p1_cpr*_r*_seed*.csv"))
+        for path in _selected_paths(
+            log_dir,
+            seeds=seeds,
+            rounds=args.rounds,
+            clients_per_round=args.clients_per_round,
+        )
     ]
     if not rows:
         raise SystemExit(f"no comparison CSV files found under {log_dir}")

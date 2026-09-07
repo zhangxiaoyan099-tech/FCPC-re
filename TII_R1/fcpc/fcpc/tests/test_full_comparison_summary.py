@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.summarize_full_comparison import summarize_run
+from scripts.summarize_full_comparison import _selected_paths, summarize_run
 
 
 class FullComparisonSummaryTests(unittest.TestCase):
@@ -35,6 +35,29 @@ class FullComparisonSummaryTests(unittest.TestCase):
         self.assertEqual(row["round_to_0.5"], 3)
         self.assertEqual(row["total_round_time_s"], 6.0)
         self.assertEqual(row["total_bytes"], 30.0)
+
+    def test_path_filters_exclude_old_rounds_and_seeds(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            names = (
+                "cifar10_full_a0p1_cpr6_r200_fedavg_seed45.csv",
+                "cifar10_full_a0p1_cpr6_r50_fedavg_seed45.csv",
+                "cifar10_full_a0p1_cpr2_r200_fedavg_seed45.csv",
+                "cifar10_full_a0p1_cpr6_r200_fedavg_seed46.csv",
+            )
+            for name in names:
+                (root / name).touch()
+            selected = _selected_paths(
+                root,
+                seeds={45},
+                rounds=200,
+                clients_per_round=6,
+            )
+
+        self.assertEqual(
+            [path.name for path in selected],
+            ["cifar10_full_a0p1_cpr6_r200_fedavg_seed45.csv"],
+        )
 
 
 if __name__ == "__main__":

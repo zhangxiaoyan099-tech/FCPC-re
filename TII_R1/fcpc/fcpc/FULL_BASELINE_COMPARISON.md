@@ -80,6 +80,9 @@ runner 会跳过已经完成的 CSV；任务中断后重新执行同一命令即
 
 ```bash
 python -m scripts.summarize_full_comparison \
+  --seeds 45,46,47 \
+  --rounds 200 \
+  --clients-per-round 6 \
   --thresholds 0.50,0.60,0.65,0.70 \
   | tee outputs/cifar10_full_comparison/summary.txt
 ```
