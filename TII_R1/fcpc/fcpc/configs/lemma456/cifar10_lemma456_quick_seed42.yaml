@@ -39,7 +39,10 @@ audit:
   epsilon: 1.0
   ldp_seed: 20042
   lambda_jsdn: 0.3
-  gradient_batch_size: 128
+  # Match the mini-batch training objective that produced the historical
+  # updates.  This removes train-BN versus eval-BN objective mismatch.
+  gradient_model_mode: train
+  gradient_batch_size: 16
   gradient_max_batches: 20
   gradient_num_workers: 4
   validation_max_batches: 20

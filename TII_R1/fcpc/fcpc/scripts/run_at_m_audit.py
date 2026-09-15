@@ -532,6 +532,9 @@ def compute_client_gradients(
     max_batches = audit_cfg.get("gradient_max_batches")
     max_batches = None if max_batches in (None, 0) else int(max_batches)
     num_workers = int(audit_cfg.get("gradient_num_workers", 0))
+    model_mode = str(audit_cfg.get("gradient_model_mode", "eval")).lower()
+    if model_mode not in {"eval", "train"}:
+        raise ValueError("audit.gradient_model_mode must be 'eval' or 'train'")
     pin_memory = bool(config.get("federated", {}).get("pin_memory", False))
     parameter_names = [name for name, _ in model_factory(config, data).named_parameters()]
     gradients: dict[int, object] = {}
@@ -553,9 +556,14 @@ def compute_client_gradients(
         model = model_factory(config, data)
         model.load_state_dict(global_state)
         model.to(device)
-        # Evaluation mode freezes BatchNorm statistics so g_i(w^t) is
-        # evaluated at one common state and is independent of probe batching.
-        model.eval()
+        # For BatchNorm models the theoretical objective must match the mode
+        # that produced the local update.  ``train`` defines F_i as the
+        # expected mini-batch training objective; running buffers may change
+        # but are not used by BatchNorm's training-mode forward pass.
+        if model_mode == "train":
+            model.train()
+        else:
+            model.eval()
         model.zero_grad(set_to_none=True)
         criterion = nn.CrossEntropyLoss(reduction="sum")
         denominator = float(len(indices))
@@ -580,7 +588,7 @@ def compute_client_gradients(
             )
         print(
             f"gradient_probe: client={client_id}, examples={len(indices)}, "
-            f"norm={float(gradients[client_id].norm().item()):.6e}",
+            f"mode={model_mode}, norm={float(gradients[client_id].norm().item()):.6e}",
             flush=True,
         )
         del model

@@ -28,7 +28,7 @@
 - 固定本地步数；
 - 相同学习率；
 - SGD，且 momentum 与 weight decay 均为 0；
-- 中性预热正常更新 BatchNorm 运行统计；冻结检查点后的两次反事实回放才冻结这些统计，使两条回放路径使用完全相同的缓冲量；
+- 对 ResNet-18 使用一致的训练态 BatchNorm mini-batch 目标：历史更新、当前梯度探针和两条反事实回放均使用相同 batch size 下的训练态 BN；验证集仍使用 `eval()`，只观察泛化；
 - 所有客户端覆盖一次且服务器按样本量聚合。
 
 检查点同时保存上一轮客户端终点 \(v_i^{\tau_i}\) 和当时服务器广播起点 \(b_i^{\tau_i}\)，因此历史更新代理可以被直接重建：
@@ -170,7 +170,7 @@ Q_t(P_t)\ge q\|g_t\|^2,
 
 便得到目标式。CSV 同时记录 `proxy_q_condition_holds` 和 `inequality_holds`，避免仅仅因为 \(\varepsilon_t^P\) 很大而把目标不等式判为成立。
 
-此外直接在与梯度探针相同的固定训练目标上计算
+此外直接在与梯度探针相同的固定训练态 mini-batch 目标上计算
 
 \[
 Q_t^{\mathrm{obs}}
@@ -241,7 +241,7 @@ python -m scripts.summarize_lemma456 \
 
 ## 9. 目前限制
 
-1. `gradient_max_batches: 20` 是快速梯度估计；正式实验应改为 `null` 并使用完整客户端训练集。
+1. `gradient_max_batches: 20` 是训练态 mini-batch 目标的快速梯度估计；正式实验应改为 `null` 并使用完整客户端训练集。
 2. 正值 \(L\) 目前只是敏感性网格。若没有独立成立的局部光滑上界，不能选择“最有利的 \(L\)”作为证明。
 3. 条件期望目前通过固定检查点下改变 batch seed 近似；正式版本应增加 batch seeds 和模型 seeds。
 4. 本实验先固定 \(H_i=H_j\) 与 \(\gamma_i=\gamma_j\)。恢复按 local epochs 训练后，必须重新加入历史与当前步数失衡项。

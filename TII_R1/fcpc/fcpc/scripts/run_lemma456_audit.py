@@ -132,6 +132,8 @@ MAIN_FIELDS = [
     "step_scale",
     "local_steps",
     "learning_rate",
+    "gradient_model_mode",
+    "gradient_batch_size",
 ]
 
 
@@ -272,6 +274,9 @@ def _replay(
         raise ValueError("matched counterfactual replay requires num_workers=0")
     mean_count = float(np.mean(list(data["sample_counts"].values())))
     algorithm = build_algorithm("fedavg")
+    gradient_model_mode = str(
+        config.get("audit", {}).get("gradient_model_mode", "eval")
+    ).lower()
     local_states: dict[int, Mapping[str, object]] = {}
     for client_id in range(int(data["num_clients"])):
         loader = build_loader(
@@ -309,7 +314,7 @@ def _replay(
             max_batches=local_steps,
             mean_sample_count=mean_count,
             fcpc_update_rule="proximal",
-            freeze_batchnorm_stats=True,
+            freeze_batchnorm_stats=gradient_model_mode == "eval",
             return_metrics=True,
         )
         if int(metrics["processed_batches"]) != local_steps:
@@ -362,7 +367,13 @@ def _evaluate_gradient_probe_objective(
     model = model_factory(config, data)
     model.load_state_dict(state)
     model.to(device)
-    model.eval()
+    model_mode = str(audit.get("gradient_model_mode", "eval")).lower()
+    if model_mode == "train":
+        model.train()
+    elif model_mode == "eval":
+        model.eval()
+    else:
+        raise ValueError("audit.gradient_model_mode must be 'eval' or 'train'")
     criterion = nn.CrossEntropyLoss(reduction="sum")
     objective = 0.0
     with torch.no_grad():
@@ -600,6 +611,12 @@ def run(config: Mapping[str, Any], *, reuse_checkpoints: bool) -> dict[str, str]
                             "step_scale": step_scale,
                             "local_steps": local_steps,
                             "learning_rate": learning_rate,
+                            "gradient_model_mode": str(
+                                audit.get("gradient_model_mode", "eval")
+                            ).lower(),
+                            "gradient_batch_size": int(
+                                audit.get("gradient_batch_size", 128)
+                            ),
                         }
                         for smoothness_l in l_values:
                             gain = compute_gain_metrics(
