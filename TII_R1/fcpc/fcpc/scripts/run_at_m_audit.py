@@ -412,6 +412,12 @@ def create_neutral_checkpoints(
                     client.client_id: clone_state(client.previous_state or global_state)
                     for client in clients
                 },
+                "client_previous_global_states": {
+                    client.client_id: clone_state(
+                        client.previous_global_state or global_state
+                    )
+                    for client in clients
+                },
             },
             path,
         )
@@ -434,7 +440,7 @@ def create_neutral_checkpoints(
         local_states = []
         for client in clients:
             local_model = model_factory(config, data)
-            state = client.local_train(
+            state, metrics = client.local_train(
                 local_model,
                 algorithm,
                 global_state,
@@ -448,7 +454,21 @@ def create_neutral_checkpoints(
                 device=device,
                 max_batches=max_batches,
                 mean_sample_count=mean_count,
+                freeze_batchnorm_stats=bool(
+                    warmup_cfg.get("freeze_batchnorm_stats", False)
+                ),
+                return_metrics=True,
             )
+            if (
+                bool(warmup_cfg.get("require_equal_steps", False))
+                and max_batches is not None
+                and int(metrics["processed_batches"]) != max_batches
+            ):
+                raise ValueError(
+                    f"neutral history client {client.client_id} produced "
+                    f"{metrics['processed_batches']} batches, expected {max_batches}; "
+                    "reduce warmup.batch_size or max_batches_per_client so H_i=H"
+                )
             local_states.append(state)
         global_state = fedavg_aggregate(
             local_states,

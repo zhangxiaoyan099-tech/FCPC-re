@@ -35,6 +35,7 @@ class Client:
         max_batches: int | None = None,
         mean_sample_count: float = 1.0,
         fcpc_update_rule: str = "penalty",
+        freeze_batchnorm_stats: bool = False,
         return_metrics: bool = False,
     ):
         """Run local training. Requires PyTorch and a DataLoader."""
@@ -46,6 +47,14 @@ class Client:
         model.load_state_dict(global_state)
         model.to(device)
         model.train()
+        if freeze_batchnorm_stats:
+            # Frozen-checkpoint theory audits treat the model state as a
+            # parameter vector.  Keeping BatchNorm running buffers fixed makes
+            # the replayed update and the evaluated objective refer to that
+            # same vector without changing ordinary training behavior.
+            for module in model.modules():
+                if isinstance(module, nn.modules.batchnorm._BatchNorm):
+                    module.eval()
         optimizer = self._build_optimizer(
             torch,
             model,

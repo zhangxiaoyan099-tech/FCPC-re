@@ -1,0 +1,77 @@
+seed: 42
+
+dataset:
+  name: synthetic
+  num_classes: 4
+  input_channels: 1
+  image_size: 28
+  train_samples: 256
+  test_samples: 64
+  augment: false
+
+model:
+  name: simple_cnn
+
+federated:
+  num_clients: 4
+  batch_size: 8
+  device: cpu
+  num_workers: 0
+
+partition:
+  mode: dual_skew
+  alpha: 0.5
+  quantity_min_fraction: 0.5
+
+evaluation:
+  validation_fraction: 0.2
+  validation_seed: 10042
+
+audit:
+  checkpoints: [1, 2]
+  panels: [raw]
+  strategies: [optimal, random]
+  batch_seeds: [100, 101]
+  random_pairing_seeds: [0]
+  epsilon: 1.0
+  ldp_seed: 20042
+  lambda_jsdn: 0.3
+  gradient_batch_size: 16
+  gradient_max_batches: null
+  gradient_num_workers: 0
+  validation_max_batches: 2
+  smoothness_L_values: [0.0, 0.1, 1.0]
+  # Phase 1 reports the admissible q ratios.  A positive q must be frozen on
+  # development seed 42 before it is tested on held-out model/batch seeds.
+  q_candidate: 0.0
+  output_dir: outputs/lemma456_smoke
+  checkpoint_dir: outputs/lemma456_smoke/neutral_checkpoints
+
+  warmup:
+    batch_size: 8
+    local_epochs: 1
+    max_batches_per_client: 1
+    require_equal_steps: true
+    freeze_batchnorm_stats: true
+    num_workers: 0
+    optimizer:
+      name: sgd
+      lr: 0.01
+      momentum: 0.0
+      weight_decay: 0.0
+
+  replay:
+    batch_size: 8
+    local_steps: 1
+    num_workers: 0
+    beta: 0.2
+    partner_weighting: uniform
+    update_rule: proximal
+    grad_center_mix: 1.0
+    grad_center_step_scale: 0.5
+    center_max_relative_distance: 0.05
+    optimizer:
+      name: sgd
+      lr: 0.01
+      momentum: 0.0
+      weight_decay: 0.0
