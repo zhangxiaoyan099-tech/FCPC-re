@@ -192,6 +192,7 @@ def _replay(
     device: str,
     center_base: str = "history",
     pair_gate_values: Mapping[tuple[int, int], float] | None = None,
+    step_scale_override: float | None = None,
 ) -> tuple[
     dict[int, Mapping[str, object]],
     Mapping[str, object],
@@ -221,7 +222,13 @@ def _replay(
 
     beta = _scheduled_beta(replay, int(checkpoint["round"]))
     weighting = str(replay.get("partner_weighting", "uniform"))
-    step_scale = float(replay.get("grad_center_step_scale", 0.5))
+    step_scale = float(
+        replay.get("grad_center_step_scale", 0.5)
+        if step_scale_override is None
+        else step_scale_override
+    )
+    if step_scale < 0.0:
+        raise ValueError("step_scale_override must be non-negative")
     effective_betas = _effective_betas(data, pairing, beta, weighting)
     references: dict[int, Mapping[str, object]] = {}
     clip_scales: dict[tuple[int, int], float] = {}

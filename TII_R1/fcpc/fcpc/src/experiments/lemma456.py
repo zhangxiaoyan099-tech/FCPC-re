@@ -390,6 +390,10 @@ def compute_gain_metrics(
         "Q_observed_loss_gain": observed_gain,
         "proxy_Q_over_grad_sq": q_proxy_vs_baseline / (gradient_norm_sq + eps),
         "Q_over_grad_sq": q_counterfactual / (gradient_norm_sq + eps),
+        "proxy_minus_epsilon_over_grad_sq": (
+            q_proxy_vs_baseline - epsilon_trajectory
+        )
+        / (gradient_norm_sq + eps),
         "P_t_norm": p_norm,
         "Z_t_norm": z_norm,
         "trajectory_error_norm": trajectory_norm,

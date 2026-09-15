@@ -76,6 +76,7 @@ MAIN_FIELDS = [
     "Q_observed_loss_gain",
     "proxy_Q_over_grad_sq",
     "Q_over_grad_sq",
+    "proxy_minus_epsilon_over_grad_sq",
     "Z_t_norm",
     "trajectory_error_norm",
     "trajectory_retention_ratio",
@@ -134,7 +135,14 @@ def parse_args() -> argparse.Namespace:
 
 
 def _write_summary(rows: list[Mapping[str, Any]], path: Path) -> None:
-    keys = ("checkpoint_round", "method", "panel", "pairing_strategy", "smoothness_L")
+    keys = (
+        "checkpoint_round",
+        "method",
+        "step_scale",
+        "panel",
+        "pairing_strategy",
+        "smoothness_L",
+    )
     grouped: dict[tuple[Any, ...], list[Mapping[str, Any]]] = defaultdict(list)
     for row in rows:
         grouped[tuple(row[key] for key in keys)].append(row)
@@ -150,6 +158,10 @@ def _write_summary(rows: list[Mapping[str, Any]], path: Path) -> None:
         "Q_counterfactual_std",
         "Q_observed_mean",
         "epsilon_trajectory_mean",
+        "proxy_q_ratio_mean",
+        "counterfactual_q_ratio_mean",
+        "counterfactual_q_ratio_lcb95",
+        "proxy_minus_epsilon_ratio_mean",
         "proxy_q_positive_fraction",
         "counterfactual_q_positive_fraction",
         "observed_gain_positive_fraction",
@@ -164,6 +176,7 @@ def _write_summary(rows: list[Mapping[str, Any]], path: Path) -> None:
             q_proxy = array("Q_proxy_vs_baseline")
             q_actual = array("Q_counterfactual")
             observed = array("Q_observed_loss_gain")
+            q_actual_ratio = array("Q_over_grad_sq")
             writer.writerow(
                 {
                     **dict(zip(keys, key)),
@@ -178,6 +191,15 @@ def _write_summary(rows: list[Mapping[str, Any]], path: Path) -> None:
                     "Q_observed_mean": observed.mean(),
                     "epsilon_trajectory_mean": array(
                         "epsilon_trajectory_bound"
+                    ).mean(),
+                    "proxy_q_ratio_mean": array("proxy_Q_over_grad_sq").mean(),
+                    "counterfactual_q_ratio_mean": q_actual_ratio.mean(),
+                    "counterfactual_q_ratio_lcb95": q_actual_ratio.mean()
+                    - 1.96
+                    * q_actual_ratio.std(ddof=1 if len(values) > 1 else 0)
+                    / max(len(values), 1) ** 0.5,
+                    "proxy_minus_epsilon_ratio_mean": array(
+                        "proxy_minus_epsilon_over_grad_sq"
                     ).mean(),
                     "proxy_q_positive_fraction": float((q_proxy > 0.0).mean()),
                     "counterfactual_q_positive_fraction": float(
@@ -225,7 +247,13 @@ def run(config: Mapping[str, Any], *, reuse_checkpoints: bool) -> dict[str, str]
     min_margin = float(oracle.get("min_margin", 0.0))
     min_cosine = float(oracle.get("min_cosine", 0.0))
     replay = audit["replay"]
-    step_scale = float(replay.get("grad_center_step_scale", 0.5))
+    configured_step_scale = float(replay.get("grad_center_step_scale", 0.5))
+    step_scales = [
+        float(value)
+        for value in oracle.get("step_scales", [configured_step_scale])
+    ]
+    if not step_scales or any(value < 0.0 for value in step_scales):
+        raise ValueError("audit.oracle.step_scales must contain non-negative values")
     local_steps = int(replay.get("local_steps", 2))
     learning_rate = float(replay.get("optimizer", {}).get("lr", 0.03))
     parameter_names = [name for name, _ in model_factory(config, data).named_parameters()]
@@ -304,111 +332,126 @@ def run(config: Mapping[str, Any], *, reuse_checkpoints: bool) -> dict[str, str]
                             config, data, off_aggregate, device
                         )
 
-                        for method, gates in (
-                            ("ungated", all_gates),
-                            ("oracle", oracle_gates),
-                        ):
-                            states, aggregate, effective_betas, clip_scales = _replay(
-                                config,
-                                data,
-                                checkpoint,
-                                pairing,
-                                gradient_mix=1.0,
-                                center_base="global",
-                                pair_gate_values=gates,
-                                batch_seed=batch_seed,
-                                device=device,
-                            )
-                            chain, pair_rows, proxy_component = compute_proxy_chain_metrics(
-                                global_state=checkpoint["model_state"],
-                                previous_states=checkpoint["client_previous_states"],
-                                previous_global_states=checkpoint[
-                                    "client_previous_global_states"
-                                ],
-                                client_gradients=gradients,
-                                sample_counts=data["sample_counts"],
-                                pairing=pairing,
-                                parameter_names=parameter_names,
-                                history_gamma=history_gamma,
-                                learning_rate=learning_rate,
-                                local_steps=local_steps,
-                                effective_betas=effective_betas,
-                                gradient_mix=1.0,
-                                step_scale=step_scale,
-                                pair_clip_scales=clip_scales,
-                                pair_gate_values=gates,
-                            )
-                            validation = evaluate(config, data, aggregate, device)
-                            objective = _evaluate_gradient_probe_objective(
-                                config, data, aggregate, device
-                            )
-                            common = {
-                                "model_seed": seed,
-                                "checkpoint_round": checkpoint_round,
-                                "panel": panel,
-                                "pairing_strategy": strategy,
-                                "pairing_seed": pairing_seed if strategy == "random" else "",
-                                "batch_seed": batch_seed,
-                                "method": method,
-                                "pair_list": json.dumps(
-                                    pairing.pairs, separators=(",", ":")
-                                ),
-                                **chain,
-                                "proxy_off_objective_loss": off_objective,
-                                "method_objective_loss": objective,
-                                "proxy_off_val_loss": off_validation["loss"],
-                                "method_val_loss": validation["loss"],
-                                "proxy_off_val_acc": off_validation["acc"],
-                                "method_val_acc": validation["acc"],
-                                "beta": _scheduled_beta(replay, checkpoint_round),
-                                "step_scale": step_scale,
-                                "local_steps": local_steps,
-                                "learning_rate": learning_rate,
-                                "oracle_min_margin": min_margin,
-                                "oracle_min_cosine": min_cosine,
-                            }
-                            for smoothness_l in l_values:
-                                gain = compute_gain_metrics(
-                                    global_state=checkpoint["model_state"],
-                                    grad_states=states,
-                                    baseline_states=off_states,
-                                    client_gradients=gradients,
-                                    sample_counts=data["sample_counts"],
-                                    parameter_names=parameter_names,
-                                    proxy_component=proxy_component,
-                                    smoothness_l=smoothness_l,
-                                    observed_loss_grad=objective,
-                                    observed_loss_baseline=off_objective,
-                                    q_candidate=float(audit.get("q_candidate", 0.0)),
+                        for step_scale in step_scales:
+                            for method, gates in (
+                                ("ungated", all_gates),
+                                ("oracle", oracle_gates),
+                            ):
+                                states, aggregate, effective_betas, clip_scales = (
+                                    _replay(
+                                        config,
+                                        data,
+                                        checkpoint,
+                                        pairing,
+                                        gradient_mix=1.0,
+                                        center_base="global",
+                                        pair_gate_values=gates,
+                                        batch_seed=batch_seed,
+                                        device=device,
+                                        step_scale_override=step_scale,
+                                    )
                                 )
-                                row = {**common, **gain}
-                                metrics_writer.writerow(
-                                    {field: row.get(field, "") for field in MAIN_FIELDS}
+                                chain, pair_rows, proxy_component = (
+                                    compute_proxy_chain_metrics(
+                                        global_state=checkpoint["model_state"],
+                                        previous_states=checkpoint[
+                                            "client_previous_states"
+                                        ],
+                                        previous_global_states=checkpoint[
+                                            "client_previous_global_states"
+                                        ],
+                                        client_gradients=gradients,
+                                        sample_counts=data["sample_counts"],
+                                        pairing=pairing,
+                                        parameter_names=parameter_names,
+                                        history_gamma=history_gamma,
+                                        learning_rate=learning_rate,
+                                        local_steps=local_steps,
+                                        effective_betas=effective_betas,
+                                        gradient_mix=1.0,
+                                        step_scale=step_scale,
+                                        pair_clip_scales=clip_scales,
+                                        pair_gate_values=gates,
+                                    )
                                 )
-                                all_rows.append(row)
-                            metrics_file.flush()
-
-                            for pair_row in pair_rows:
-                                key = (
-                                    min(int(pair_row["client_i"]), int(pair_row["client_j"])),
-                                    max(int(pair_row["client_i"]), int(pair_row["client_j"])),
+                                validation = evaluate(config, data, aggregate, device)
+                                objective = _evaluate_gradient_probe_objective(
+                                    config, data, aggregate, device
                                 )
-                                enriched = {
-                                    **common,
-                                    **oracle_by_pair[key],
-                                    **pair_row,
+                                common = {
+                                    "model_seed": seed,
+                                    "checkpoint_round": checkpoint_round,
+                                    "panel": panel,
+                                    "pairing_strategy": strategy,
+                                    "pairing_seed": (
+                                        pairing_seed if strategy == "random" else ""
+                                    ),
+                                    "batch_seed": batch_seed,
+                                    "method": method,
+                                    "pair_list": json.dumps(
+                                        pairing.pairs, separators=(",", ":")
+                                    ),
+                                    **chain,
+                                    "proxy_off_objective_loss": off_objective,
+                                    "method_objective_loss": objective,
+                                    "proxy_off_val_loss": off_validation["loss"],
+                                    "method_val_loss": validation["loss"],
+                                    "proxy_off_val_acc": off_validation["acc"],
+                                    "method_val_acc": validation["acc"],
+                                    "beta": _scheduled_beta(
+                                        replay, checkpoint_round
+                                    ),
+                                    "step_scale": step_scale,
+                                    "local_steps": local_steps,
+                                    "learning_rate": learning_rate,
+                                    "oracle_min_margin": min_margin,
+                                    "oracle_min_cosine": min_cosine,
                                 }
-                                pair_writer.writerow(
-                                    {field: enriched.get(field, "") for field in PAIR_FIELDS}
+                                for smoothness_l in l_values:
+                                    gain = compute_gain_metrics(
+                                        global_state=checkpoint["model_state"],
+                                        grad_states=states,
+                                        baseline_states=off_states,
+                                        client_gradients=gradients,
+                                        sample_counts=data["sample_counts"],
+                                        parameter_names=parameter_names,
+                                        proxy_component=proxy_component,
+                                        smoothness_l=smoothness_l,
+                                        observed_loss_grad=objective,
+                                        observed_loss_baseline=off_objective,
+                                        q_candidate=float(
+                                            audit.get("q_candidate", 0.0)
+                                        ),
+                                    )
+                                    row = {**common, **gain}
+                                    metrics_writer.writerow(
+                                        {field: row.get(field, "") for field in MAIN_FIELDS}
+                                    )
+                                    all_rows.append(row)
+                                metrics_file.flush()
+
+                                for pair_row in pair_rows:
+                                    key = (
+                                        min(int(pair_row["client_i"]), int(pair_row["client_j"])),
+                                        max(int(pair_row["client_i"]), int(pair_row["client_j"])),
+                                    )
+                                    enriched = {
+                                        **common,
+                                        **oracle_by_pair[key],
+                                        **pair_row,
+                                    }
+                                    pair_writer.writerow(
+                                        {field: enriched.get(field, "") for field in PAIR_FIELDS}
+                                    )
+                                pairs_file.flush()
+                                print(
+                                    f"oracle_audit: t={checkpoint_round}, method={method}, "
+                                    f"step_scale={step_scale:g}, batch_seed={batch_seed}, "
+                                    f"gate={chain['proxy_gate_fraction']:.1%}, "
+                                    f"-<g,P>={chain['lemma6_projection']:+.3e}, "
+                                    f"observed_Q={off_objective - objective:+.3e}",
+                                    flush=True,
                                 )
-                            pairs_file.flush()
-                            print(
-                                f"oracle_audit: t={checkpoint_round}, method={method}, "
-                                f"batch_seed={batch_seed}, gate={chain['proxy_gate_fraction']:.1%}, "
-                                f"-<g,P>={chain['lemma6_projection']:+.3e}, "
-                                f"observed_Q={off_objective - objective:+.3e}",
-                                flush=True,
-                            )
 
     _write_summary(all_rows, summary_path)
     return {

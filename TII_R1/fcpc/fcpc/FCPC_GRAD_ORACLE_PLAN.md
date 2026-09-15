@@ -42,7 +42,7 @@ c^{\mathrm{ungated}}_{p,t}=w^t+s_td_p^t,
 
 \[
 c^{\mathrm{oracle}}_{p,t}
-=w^t+s_t\chi^{\mathrm{oracle}}_{p,t}d_p^t.
+=w^t+s_t\phi^{\mathrm{oracle}}_{p,t}d_p^t.
 \]
 
 `proxy_off` 仍然执行 proximal，只是中心为当前全局模型。因此 oracle 与 off 的唯一干预是历史代理位移。
@@ -67,7 +67,7 @@ m_p^t=-\langle g_t,d_p^t\rangle.
 
 \[
 \boxed{
-\chi^{\mathrm{oracle}}_{p,t}
+\phi^{\mathrm{oracle}}_{p,t}
 =\mathbf 1\{m_p^t>0\}
 \mathbf 1\{\cos(d_p^t,-g_t)\ge0\}.
 }
@@ -81,11 +81,11 @@ exact proximal 把中心位移传入客户端更新的系数为
 
 \[
 \lambda_{i,t}
-=s_t\chi_{p,t}\kappa_{p,t}
+=s_t\phi_{p,t}\chi_{p,t}
 \left[1-\left(\frac{1}{1+2\eta_t\beta_{i,t}}\right)^H\right]\ge0,
 \]
 
-其中 \(\kappa_{p,t}\in[0,1]\) 是中心裁剪比例。配对平均传递系数为
+其中 \(\phi_{p,t}\in[0,1]\) 是方向门控，\(\chi_{p,t}\in[0,1]\) 是中心裁剪比例。配对平均传递系数为
 
 \[
 \bar\lambda_{p,t}
@@ -180,6 +180,22 @@ Q_t(X_t;B_t)=-\langle g_t,X_t\rangle.
 
 ## 7. 运行顺序
 
+当前第二阶段配置在完全相同的冻结检查点上使用 20 条随机本地轨迹，并公平比较
+
+\[
+s_t\in\{0.1,0.25,0.5\}.
+\]
+
+汇总会额外输出
+
+\[
+q_P=\frac{Q_t(P_t)}{\|g_t\|^2},
+\qquad
+q_Z=\frac{Q_t(Z_t)}{\|g_t\|^2},
+\]
+
+以及 $q_Z$ 的近似 95% 下置信界。若某个 $s_t$ 在多个检查点上具有正的下置信界，且 `obs>0` 比例没有明显下降，它才进入完整梯度和独立模型种子验证。
+
 单元测试与合成冒烟：
 
 ```bash
@@ -205,10 +221,23 @@ python -m scripts.summarize_fcpc_grad_oracle \
   --panel raw --strategy optimal
 ```
 
+第二阶段步长筛选写入独立目录，不覆盖上述结果：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python -u -m scripts.run_fcpc_grad_oracle_audit \
+  --config configs/lemma456/cifar10_fcpc_grad_oracle_stepscale_seed42.yaml \
+  --reuse-checkpoints \
+  2>&1 | tee outputs/fcpc_grad_oracle_stepscale_seed42_console.txt
+
+python -m scripts.summarize_fcpc_grad_oracle \
+  outputs/fcpc_grad_oracle_stepscale_seed42/oracle_metrics.csv \
+  --panel raw --strategy optimal
+```
+
 ## 8. 当前不足
 
 1. oracle 使用真实经验全局梯度，不可直接部署；
-2. 快速实验只用每客户端 20 个梯度探针 batch，正式审计需使用完整本地训练集；
+2. 当前步长筛选仍只用每客户端 20 个梯度探针 batch；选出 $s_t$ 后，正式审计需把 `gradient_max_batches` 改为 `null`；
 3. 当前先固定相同本地步数和学习率，尚未恢复 quantity skew 下的 \(H_i\)、\(\gamma_i\) 失衡项；
 4. 正 \(L\) 尚无独立估计，只能先以 \(L=0\) 判断方向；
 5. 单轮审计不能替代多轮收敛实验；oracle 成功后仍需设计可部署历史门控并单独训练。

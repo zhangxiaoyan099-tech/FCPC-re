@@ -49,6 +49,7 @@ audit:
   oracle:
     min_margin: 0.0
     min_cosine: 0.0
+    step_scales: [0.1, 0.5]
 
   warmup:
     batch_size: 8
