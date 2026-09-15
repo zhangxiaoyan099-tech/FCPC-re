@@ -190,6 +190,8 @@ def _replay(
     gradient_mix: float,
     batch_seed: int,
     device: str,
+    center_base: str = "history",
+    pair_gate_values: Mapping[tuple[int, int], float] | None = None,
 ) -> tuple[
     dict[int, Mapping[str, object]],
     Mapping[str, object],
@@ -223,6 +225,10 @@ def _replay(
     effective_betas = _effective_betas(data, pairing, beta, weighting)
     references: dict[int, Mapping[str, object]] = {}
     clip_scales: dict[tuple[int, int], float] = {}
+    center_base = str(center_base).lower()
+    if center_base not in {"history", "global"}:
+        raise ValueError("center_base must be 'history' or 'global'")
+    gate_values = pair_gate_values or {}
     for client_i, client_j in pairing.pairs:
         history_center = weighted_state_center(
             previous_states[client_i],
@@ -241,10 +247,15 @@ def _replay(
             global_state,
             step_scale=step_scale,
         )
+        base_center = history_center if center_base == "history" else global_state
+        key = (min(client_i, client_j), max(client_i, client_j))
+        gate = float(gate_values.get(key, 1.0))
+        if not 0.0 <= gate <= 1.0:
+            raise ValueError("pair gate values must be in [0, 1]")
         center = blend_state_centers(
-            history_center,
+            base_center,
             gradient_center,
-            gradient_mix=float(gradient_mix),
+            gradient_mix=float(gradient_mix) * gate,
         )
         center, _, clip_scale = clip_state_center_to_global(
             center,
@@ -254,9 +265,7 @@ def _replay(
         )
         references[client_i] = center
         references[client_j] = center
-        clip_scales[(min(client_i, client_j), max(client_i, client_j))] = float(
-            clip_scale
-        )
+        clip_scales[key] = float(clip_scale)
 
     optimizer = replay.get("optimizer", {})
     if str(optimizer.get("name", "sgd")).lower() != "sgd":

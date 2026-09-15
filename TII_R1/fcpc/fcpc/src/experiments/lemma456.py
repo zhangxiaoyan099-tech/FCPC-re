@@ -77,6 +77,76 @@ def proximal_transfer_coefficient(
     return float(1.0 - contraction**local_steps)
 
 
+def compute_pair_oracle_gates(
+    *,
+    previous_states: Mapping[int, Mapping[str, object]],
+    previous_global_states: Mapping[int, Mapping[str, object]],
+    client_gradients: Mapping[int, object],
+    sample_counts: Mapping[int, float],
+    pairing: PairingResult,
+    parameter_names: Sequence[str],
+    min_margin: float = 0.0,
+    min_cosine: float = 0.0,
+    eps: float = 1e-12,
+) -> tuple[dict[tuple[int, int], float], list[dict[str, float | bool | int]]]:
+    """Return an unavailable-in-practice oracle gate for each client pair.
+
+    A pair update proxy ``d_p`` is admitted only when its projection on the
+    *true empirical* global descent direction is sufficiently positive:
+
+    ``-<g_t, d_p> > min_margin`` and ``cos(d_p, -g_t) >= min_cosine``.
+
+    The helper is deliberately an audit oracle, not a deployable FCPC rule.
+    It establishes whether rejecting harmful historical directions would be
+    enough to repair the Lemma 4--6 mechanism before a history-only gate is
+    designed.
+    """
+    client_ids, weights = _weights(sample_counts)
+    if set(client_gradients) != set(client_ids):
+        raise ValueError("client_gradients must cover every client")
+    global_gradient = aggregate_gradient(client_gradients, sample_counts)
+    global_norm = float(global_gradient.norm().item())
+    gates: dict[tuple[int, int], float] = {}
+    rows: list[dict[str, float | bool | int]] = []
+    for client_i, client_j in pairing.pairs:
+        pair_mass = weights[client_i] + weights[client_j]
+        theta = weights[client_i] / pair_mass
+        update_i = flatten_state_delta(
+            previous_states[client_i], previous_global_states[client_i], parameter_names
+        )
+        update_j = flatten_state_delta(
+            previous_states[client_j], previous_global_states[client_j], parameter_names
+        )
+        d_pair = theta * update_i + (1.0 - theta) * update_j
+        d_norm = float(d_pair.norm().item())
+        margin = float(-global_gradient.dot(d_pair).item())
+        cosine = (
+            margin / (global_norm * d_norm)
+            if global_norm * d_norm > eps
+            else float("nan")
+        )
+        accepted = bool(
+            d_norm > eps
+            and margin > float(min_margin)
+            and cosine >= float(min_cosine)
+        )
+        key = (min(client_i, client_j), max(client_i, client_j))
+        gates[key] = 1.0 if accepted else 0.0
+        rows.append(
+            {
+                "client_i": client_i,
+                "client_j": client_j,
+                "pair_mass": pair_mass,
+                "theta": theta,
+                "d_pair_norm": d_norm,
+                "oracle_margin": margin,
+                "oracle_cosine": cosine,
+                "oracle_gate": accepted,
+            }
+        )
+    return gates, rows
+
+
 def compute_proxy_chain_metrics(
     *,
     global_state: Mapping[str, object],
@@ -93,6 +163,7 @@ def compute_proxy_chain_metrics(
     gradient_mix: float,
     step_scale: float,
     pair_clip_scales: Mapping[tuple[int, int], float] | None = None,
+    pair_gate_values: Mapping[tuple[int, int], float] | None = None,
     eps: float = 1e-12,
 ) -> tuple[dict[str, float | bool], list[dict[str, float | bool | int]], object]:
     """Measure the Lemma 4 pair conditions and Lemma 5--6 proxy component.
@@ -119,6 +190,8 @@ def compute_proxy_chain_metrics(
     sufficient_count = 0
     favorable_count = 0
     clip_scales = pair_clip_scales or {}
+    gate_values = pair_gate_values or {}
+    accepted_pair_mass = 0.0
 
     for client_i, client_j in pairing.pairs:
         pair_mass = weights[client_i] + weights[client_j]
@@ -149,10 +222,15 @@ def compute_proxy_chain_metrics(
 
         key = (min(client_i, client_j), max(client_i, client_j))
         clip_scale = float(clip_scales.get(key, 1.0))
+        pair_gate = float(gate_values.get(key, 1.0))
+        if not 0.0 <= pair_gate <= 1.0:
+            raise ValueError("pair gate values must be in [0, 1]")
+        accepted_pair_mass += pair_mass * pair_gate
         lambda_i = (
             float(gradient_mix)
             * float(step_scale)
             * clip_scale
+            * pair_gate
             * proximal_transfer_coefficient(
                 beta=float(effective_betas.get(client_i, 0.0)),
                 learning_rate=learning_rate,
@@ -163,6 +241,7 @@ def compute_proxy_chain_metrics(
             float(gradient_mix)
             * float(step_scale)
             * clip_scale
+            * pair_gate
             * proximal_transfer_coefficient(
                 beta=float(effective_betas.get(client_j, 0.0)),
                 learning_rate=learning_rate,
@@ -191,6 +270,7 @@ def compute_proxy_chain_metrics(
                 "descent_lower_bound": lower_bound,
                 "lower_bound_slack": margin - lower_bound,
                 "proxy_is_favorable": favorable,
+                "proxy_gate": pair_gate,
                 "center_clip_scale": clip_scale,
                 "lambda_i": lambda_i,
                 "lambda_j": lambda_j,
@@ -219,6 +299,12 @@ def compute_proxy_chain_metrics(
         "proxy_favorable_fraction": (
             favorable_count / pair_count if pair_count else float("nan")
         ),
+        "proxy_gate_fraction": (
+            sum(float(value) for value in gate_values.values()) / pair_count
+            if pair_count and gate_values
+            else (1.0 if pair_count else float("nan"))
+        ),
+        "accepted_pair_mass": accepted_pair_mass if gate_values else 1.0,
         "all_pairs_lemma4_sufficient": bool(pair_count and sufficient_count == pair_count),
         "all_pairs_proxy_favorable": bool(pair_count and favorable_count == pair_count),
         "P_t_norm": proxy_norm,
@@ -298,6 +384,7 @@ def compute_gain_metrics(
         "smoothness_L": smoothness_l,
         "q_candidate": float(q_candidate),
         "Q_internal": q_internal,
+        "Q_proxy_vs_baseline": q_proxy_vs_baseline,
         "Q_proxy_vs_mix0": q_proxy_vs_baseline,
         "Q_counterfactual": q_counterfactual,
         "Q_observed_loss_gain": observed_gain,
