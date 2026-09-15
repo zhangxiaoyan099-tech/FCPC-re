@@ -53,11 +53,38 @@ class Lemma456MetricTests(unittest.TestCase):
             step_scale=0.5,
         )
         self.assertTrue(metrics["all_pairs_lemma4_sufficient"])
+        self.assertEqual(metrics["lemma4_parallel_sufficient_fraction"], 1.0)
+        self.assertTrue(metrics["server_parallel_condition_holds"])
         self.assertTrue(metrics["all_pairs_proxy_favorable"])
         self.assertAlmostEqual(rows[0]["epsilon_pair"], 0.0, places=7)
         self.assertAlmostEqual(metrics["lemma6_identity_gap"], 0.0, places=7)
         self.assertGreater(metrics["lemma6_projection"], 0.0)
         self.assertGreater(float(proxy.norm().item()), 0.0)
+
+    def test_parallel_condition_ignores_large_orthogonal_residual(self) -> None:
+        ends = {
+            0: {"weight": torch.tensor([-0.1, 10.0])},
+            1: {"weight": torch.tensor([-0.1, 10.0])},
+        }
+        metrics, rows, _ = compute_proxy_chain_metrics(
+            global_state=self.global_state,
+            previous_states=ends,
+            previous_global_states=self.starts,
+            client_gradients=self.gradients,
+            sample_counts={0: 1, 1: 1},
+            pairing=self.pairing,
+            parameter_names=["weight"],
+            history_gamma=0.1,
+            learning_rate=0.1,
+            local_steps=2,
+            effective_betas={0: 0.2, 1: 0.2},
+            gradient_mix=1.0,
+            step_scale=0.5,
+        )
+        self.assertFalse(rows[0]["lemma4_sufficient_holds"])
+        self.assertTrue(rows[0]["lemma4_parallel_sufficient_holds"])
+        self.assertGreater(rows[0]["descent_margin"], 0.0)
+        self.assertTrue(metrics["server_parallel_condition_holds"])
 
     def test_proximal_coefficient_matches_closed_form(self) -> None:
         value = proximal_transfer_coefficient(

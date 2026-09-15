@@ -44,14 +44,18 @@ def main() -> None:
     for row in rows:
         grouped[(int(row["checkpoint_round"]), float(row["smoothness_L"]))].append(row)
     print(
-        "round      L      L4%    favorable%    -<g,P>    cos(P,-g)      E[Q]  "
-        "obs gain    eps_P     q(proxy)    q(actual)  q-gate  bound"
+        "round      L   L4norm%    L4par%  server%  srv slack  favorable%    "
+        "-<g,P>    cos(P,-g)      E[Q]  obs gain    eps_P     q(proxy)    "
+        "q(actual)  q-gate  bound"
     )
     for (round_number, smoothness_l), values in sorted(grouped.items()):
         mean = lambda name: float(np.mean([_as_float(row[name]) for row in values]))
         print(
             f"{round_number:5d} {smoothness_l:6.2g} "
             f"{100*mean('lemma4_sufficient_fraction'):7.2f} "
+            f"{100*mean('lemma4_parallel_sufficient_fraction'):8.2f} "
+            f"{100*mean('server_parallel_condition_holds'):7.2f} "
+            f"{mean('server_parallel_condition_slack'):10.3e} "
             f"{100*mean('proxy_favorable_fraction'):11.2f} "
             f"{mean('lemma6_projection'):10.3e} "
             f"{mean('P_t_descent_cosine'):11.4f} "

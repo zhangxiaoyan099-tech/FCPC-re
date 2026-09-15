@@ -188,10 +188,18 @@ def compute_proxy_chain_metrics(
     weighted_margin = 0.0
     weighted_lower_bound = 0.0
     sufficient_count = 0
+    parallel_sufficient_count = 0
     favorable_count = 0
     clip_scales = pair_clip_scales or {}
     gate_values = pair_gate_values or {}
     accepted_pair_mass = 0.0
+    server_coefficient = 0.0
+    server_gradient_error = torch.zeros_like(global_gradient)
+    server_history_residual = torch.zeros_like(global_gradient)
+    gradient_heterogeneity = 0.0
+    history_residual_energy = 0.0
+    gradient_bound_factor = 0.0
+    history_bound_factor = 0.0
 
     for client_i, client_j in pairing.pairs:
         pair_mass = weights[client_i] + weights[client_j]
@@ -208,16 +216,42 @@ def compute_proxy_chain_metrics(
             + (1.0 - theta)
             * client_gradients[client_j].detach().cpu().float().reshape(-1)
         )
-        delta = float((g_pair - global_gradient).norm().item())
-        epsilon = float((d_pair + float(history_gamma) * g_pair).norm().item())
+        gradient_error = g_pair - global_gradient
+        history_residual = d_pair + float(history_gamma) * g_pair
+        delta = float(gradient_error.norm().item())
+        epsilon = float(history_residual.norm().item())
         condition_rhs = delta + epsilon / float(history_gamma)
         sufficient = bool(gradient_norm > condition_rhs)
         margin = float(-global_gradient.dot(d_pair).item())
+        gradient_error_inner = float(global_gradient.dot(gradient_error).item())
+        history_residual_inner = float(
+            global_gradient.dot(history_residual).item()
+        )
+        if gradient_norm > eps:
+            delta_parallel = max(0.0, -gradient_error_inner / gradient_norm)
+            epsilon_parallel = max(0.0, history_residual_inner / gradient_norm)
+            exact_directional_slack = margin / (
+                float(history_gamma) * gradient_norm
+            )
+        else:
+            delta_parallel = 0.0
+            epsilon_parallel = 0.0
+            exact_directional_slack = 0.0
+        parallel_condition_rhs = (
+            delta_parallel + epsilon_parallel / float(history_gamma)
+        )
+        parallel_sufficient = bool(gradient_norm > parallel_condition_rhs)
+        parallel_lower_bound = float(
+            history_gamma
+            * gradient_norm
+            * (gradient_norm - parallel_condition_rhs)
+        )
         lower_bound = float(
             history_gamma * gradient_norm * (gradient_norm - condition_rhs)
         )
         favorable = bool(margin > 0.0)
         sufficient_count += int(sufficient)
+        parallel_sufficient_count += int(parallel_sufficient)
         favorable_count += int(favorable)
 
         key = (min(client_i, client_j), max(client_i, client_j))
@@ -250,6 +284,20 @@ def compute_proxy_chain_metrics(
         )
         lambda_bar = theta * lambda_i + (1.0 - theta) * lambda_j
         proxy_component.add_(d_pair, alpha=pair_mass * lambda_bar)
+        weighted_gamma_lambda = (
+            pair_mass * lambda_bar * float(history_gamma)
+        )
+        server_coefficient += weighted_gamma_lambda
+        server_gradient_error.add_(gradient_error, alpha=weighted_gamma_lambda)
+        server_history_residual.add_(
+            history_residual, alpha=pair_mass * lambda_bar
+        )
+        gradient_heterogeneity += pair_mass * squared_l2(gradient_error)
+        history_residual_energy += pair_mass * squared_l2(history_residual)
+        gradient_bound_factor += (
+            pair_mass * (lambda_bar * float(history_gamma)) ** 2
+        )
+        history_bound_factor += pair_mass * lambda_bar**2
         weighted_margin += pair_mass * lambda_bar * margin
         weighted_lower_bound += pair_mass * lambda_bar * lower_bound
         rows.append(
@@ -263,6 +311,18 @@ def compute_proxy_chain_metrics(
                 "delta_pair": delta,
                 "epsilon_pair": epsilon,
                 "epsilon_over_gamma": epsilon / float(history_gamma),
+                "gradient_error_inner": gradient_error_inner,
+                "history_residual_inner": history_residual_inner,
+                "delta_parallel": delta_parallel,
+                "epsilon_parallel": epsilon_parallel,
+                "epsilon_parallel_over_gamma": epsilon_parallel
+                / float(history_gamma),
+                "lemma4_parallel_condition_rhs": parallel_condition_rhs,
+                "lemma4_parallel_condition_slack": gradient_norm
+                - parallel_condition_rhs,
+                "lemma4_parallel_sufficient_holds": parallel_sufficient,
+                "lemma4_parallel_lower_bound": parallel_lower_bound,
+                "lemma4_exact_directional_slack": exact_directional_slack,
                 "lemma4_condition_rhs": condition_rhs,
                 "lemma4_condition_slack": gradient_norm - condition_rhs,
                 "lemma4_sufficient_holds": sufficient,
@@ -288,6 +348,49 @@ def compute_proxy_chain_metrics(
         else float("nan")
     )
     pair_count = len(pairing.pairs)
+    reconstructed_proxy = (
+        -server_coefficient * global_gradient
+        - server_gradient_error
+        + server_history_residual
+    )
+    server_decomposition_gap = float(
+        (proxy_component - reconstructed_proxy).norm().item()
+    )
+    if gradient_norm > eps:
+        server_delta_parallel = max(
+            0.0,
+            -float(global_gradient.dot(server_gradient_error).item())
+            / gradient_norm,
+        )
+        server_epsilon_parallel = max(
+            0.0,
+            float(global_gradient.dot(server_history_residual).item())
+            / gradient_norm,
+        )
+    else:
+        server_delta_parallel = 0.0
+        server_epsilon_parallel = 0.0
+    server_parallel_slack = (
+        server_coefficient * gradient_norm
+        - server_delta_parallel
+        - server_epsilon_parallel
+    )
+    server_norm_slack = (
+        server_coefficient * gradient_norm
+        - float(server_gradient_error.norm().item())
+        - float(server_history_residual.norm().item())
+    )
+    gradient_error_bound = float(
+        max(gradient_bound_factor * gradient_heterogeneity, 0.0) ** 0.5
+    )
+    history_residual_bound = float(
+        max(history_bound_factor * history_residual_energy, 0.0) ** 0.5
+    )
+    server_second_moment_slack = (
+        server_coefficient * gradient_norm
+        - gradient_error_bound
+        - history_residual_bound
+    )
     metrics: dict[str, float | bool] = {
         "global_gradient_norm": gradient_norm,
         "global_gradient_norm_sq": gradient_norm_sq,
@@ -295,6 +398,11 @@ def compute_proxy_chain_metrics(
         "pair_count": float(pair_count),
         "lemma4_sufficient_fraction": (
             sufficient_count / pair_count if pair_count else float("nan")
+        ),
+        "lemma4_parallel_sufficient_fraction": (
+            parallel_sufficient_count / pair_count
+            if pair_count
+            else float("nan")
         ),
         "proxy_favorable_fraction": (
             favorable_count / pair_count if pair_count else float("nan")
@@ -315,6 +423,26 @@ def compute_proxy_chain_metrics(
         "lemma6_lower_bound_slack": lemma6_lhs - weighted_lower_bound,
         "P_t_descent_cosine": cosine,
         "first_order_q_ratio": lemma6_lhs / (gradient_norm_sq + eps),
+        "server_coefficient_C_t": server_coefficient,
+        "server_gradient_error_norm": float(server_gradient_error.norm().item()),
+        "server_history_residual_norm": float(
+            server_history_residual.norm().item()
+        ),
+        "server_delta_parallel": server_delta_parallel,
+        "server_epsilon_parallel": server_epsilon_parallel,
+        "server_parallel_condition_slack": server_parallel_slack,
+        "server_parallel_condition_holds": bool(server_parallel_slack > 0.0),
+        "server_norm_condition_slack": server_norm_slack,
+        "server_norm_condition_holds": bool(server_norm_slack > 0.0),
+        "gradient_heterogeneity_H_t": gradient_heterogeneity,
+        "history_residual_energy_A_t": history_residual_energy,
+        "server_gradient_error_bound": gradient_error_bound,
+        "server_history_residual_bound": history_residual_bound,
+        "server_second_moment_condition_slack": server_second_moment_slack,
+        "server_second_moment_condition_holds": bool(
+            server_second_moment_slack > 0.0
+        ),
+        "server_proxy_decomposition_gap": server_decomposition_gap,
     }
     return metrics, rows, proxy_component
 

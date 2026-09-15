@@ -66,6 +66,16 @@ PAIR_FIELDS = [
     "delta_pair",
     "epsilon_pair",
     "epsilon_over_gamma",
+    "gradient_error_inner",
+    "history_residual_inner",
+    "delta_parallel",
+    "epsilon_parallel",
+    "epsilon_parallel_over_gamma",
+    "lemma4_parallel_condition_rhs",
+    "lemma4_parallel_condition_slack",
+    "lemma4_parallel_sufficient_holds",
+    "lemma4_parallel_lower_bound",
+    "lemma4_exact_directional_slack",
     "lemma4_condition_rhs",
     "lemma4_condition_slack",
     "lemma4_sufficient_holds",
@@ -95,6 +105,7 @@ MAIN_FIELDS = [
     "history_gamma",
     "pair_count",
     "lemma4_sufficient_fraction",
+    "lemma4_parallel_sufficient_fraction",
     "proxy_favorable_fraction",
     "all_pairs_lemma4_sufficient",
     "all_pairs_proxy_favorable",
@@ -106,6 +117,22 @@ MAIN_FIELDS = [
     "lemma6_lower_bound_slack",
     "P_t_descent_cosine",
     "first_order_q_ratio",
+    "server_coefficient_C_t",
+    "server_gradient_error_norm",
+    "server_history_residual_norm",
+    "server_delta_parallel",
+    "server_epsilon_parallel",
+    "server_parallel_condition_slack",
+    "server_parallel_condition_holds",
+    "server_norm_condition_slack",
+    "server_norm_condition_holds",
+    "gradient_heterogeneity_H_t",
+    "history_residual_energy_A_t",
+    "server_gradient_error_bound",
+    "server_history_residual_bound",
+    "server_second_moment_condition_slack",
+    "server_second_moment_condition_holds",
+    "server_proxy_decomposition_gap",
     "Q_internal",
     "Q_proxy_vs_mix0",
     "Q_counterfactual",
@@ -430,7 +457,11 @@ def _write_summary(rows: list[Mapping[str, Any]], path: Path) -> None:
         *keys,
         "n",
         "lemma4_sufficient_fraction_mean",
+        "lemma4_parallel_sufficient_fraction_mean",
         "proxy_favorable_fraction_mean",
+        "server_parallel_condition_hold_fraction",
+        "server_parallel_condition_slack_mean",
+        "server_second_moment_condition_hold_fraction",
         "lemma6_projection_mean",
         "P_t_descent_cosine_mean",
         "Q_counterfactual_mean",
@@ -460,8 +491,20 @@ def _write_summary(rows: list[Mapping[str, Any]], path: Path) -> None:
                     "lemma4_sufficient_fraction_mean": array(
                         "lemma4_sufficient_fraction"
                     ).mean(),
+                    "lemma4_parallel_sufficient_fraction_mean": array(
+                        "lemma4_parallel_sufficient_fraction"
+                    ).mean(),
                     "proxy_favorable_fraction_mean": array(
                         "proxy_favorable_fraction"
+                    ).mean(),
+                    "server_parallel_condition_hold_fraction": array(
+                        "server_parallel_condition_holds"
+                    ).mean(),
+                    "server_parallel_condition_slack_mean": array(
+                        "server_parallel_condition_slack"
+                    ).mean(),
+                    "server_second_moment_condition_hold_fraction": array(
+                        "server_second_moment_condition_holds"
                     ).mean(),
                     "lemma6_projection_mean": array("lemma6_projection").mean(),
                     "P_t_descent_cosine_mean": array("P_t_descent_cosine").mean(),
@@ -664,6 +707,8 @@ def run(config: Mapping[str, Any], *, reuse_checkpoints: bool) -> dict[str, str]
                             f"lemma456: t={checkpoint_round}, panel={panel}, "
                             f"strategy={strategy}, batch_seed={batch_seed}, "
                             f"L4={chain['lemma4_sufficient_fraction']:.1%}, "
+                            f"L4_parallel={chain['lemma4_parallel_sufficient_fraction']:.1%}, "
+                            f"server_parallel={chain['server_parallel_condition_holds']}, "
                             f"favorable={chain['proxy_favorable_fraction']:.1%}, "
                             f"-<g,P>={chain['lemma6_projection']:+.3e}, "
                             f"observed_Q={mix0_objective - grad_objective:+.3e}",

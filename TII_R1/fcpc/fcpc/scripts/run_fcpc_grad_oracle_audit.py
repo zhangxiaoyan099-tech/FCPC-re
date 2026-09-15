@@ -64,6 +64,8 @@ MAIN_FIELDS = [
     "global_gradient_norm",
     "global_gradient_norm_sq",
     "pair_count",
+    "lemma4_sufficient_fraction",
+    "lemma4_parallel_sufficient_fraction",
     "proxy_favorable_fraction",
     "proxy_gate_fraction",
     "accepted_pair_mass",
@@ -71,6 +73,22 @@ MAIN_FIELDS = [
     "lemma6_projection",
     "P_t_descent_cosine",
     "first_order_q_ratio",
+    "server_coefficient_C_t",
+    "server_gradient_error_norm",
+    "server_history_residual_norm",
+    "server_delta_parallel",
+    "server_epsilon_parallel",
+    "server_parallel_condition_slack",
+    "server_parallel_condition_holds",
+    "server_norm_condition_slack",
+    "server_norm_condition_holds",
+    "gradient_heterogeneity_H_t",
+    "history_residual_energy_A_t",
+    "server_gradient_error_bound",
+    "server_history_residual_bound",
+    "server_second_moment_condition_slack",
+    "server_second_moment_condition_holds",
+    "server_proxy_decomposition_gap",
     "Q_proxy_vs_baseline",
     "Q_counterfactual",
     "Q_observed_loss_gain",
@@ -110,6 +128,15 @@ PAIR_FIELDS = [
     "pair_mass",
     "theta",
     "d_pair_norm",
+    "delta_pair",
+    "epsilon_pair",
+    "delta_parallel",
+    "epsilon_parallel",
+    "lemma4_condition_slack",
+    "lemma4_sufficient_holds",
+    "lemma4_parallel_condition_slack",
+    "lemma4_parallel_sufficient_holds",
+    "lemma4_exact_directional_slack",
     "oracle_margin",
     "oracle_cosine",
     "oracle_gate",
@@ -150,7 +177,12 @@ def _write_summary(rows: list[Mapping[str, Any]], path: Path) -> None:
         *keys,
         "n",
         "gate_fraction",
+        "norm_condition_fraction",
+        "parallel_condition_fraction",
         "favorable_fraction",
+        "server_parallel_hold_fraction",
+        "server_parallel_slack_mean",
+        "server_second_moment_hold_fraction",
         "lemma6_projection_mean",
         "descent_cosine_mean",
         "Q_proxy_mean",
@@ -182,7 +214,22 @@ def _write_summary(rows: list[Mapping[str, Any]], path: Path) -> None:
                     **dict(zip(keys, key)),
                     "n": len(values),
                     "gate_fraction": array("proxy_gate_fraction").mean(),
+                    "norm_condition_fraction": array(
+                        "lemma4_sufficient_fraction"
+                    ).mean(),
+                    "parallel_condition_fraction": array(
+                        "lemma4_parallel_sufficient_fraction"
+                    ).mean(),
                     "favorable_fraction": array("proxy_favorable_fraction").mean(),
+                    "server_parallel_hold_fraction": array(
+                        "server_parallel_condition_holds"
+                    ).mean(),
+                    "server_parallel_slack_mean": array(
+                        "server_parallel_condition_slack"
+                    ).mean(),
+                    "server_second_moment_hold_fraction": array(
+                        "server_second_moment_condition_holds"
+                    ).mean(),
                     "lemma6_projection_mean": array("lemma6_projection").mean(),
                     "descent_cosine_mean": array("P_t_descent_cosine").mean(),
                     "Q_proxy_mean": q_proxy.mean(),
@@ -448,6 +495,8 @@ def run(config: Mapping[str, Any], *, reuse_checkpoints: bool) -> dict[str, str]
                                     f"oracle_audit: t={checkpoint_round}, method={method}, "
                                     f"step_scale={step_scale:g}, batch_seed={batch_seed}, "
                                     f"gate={chain['proxy_gate_fraction']:.1%}, "
+                                    f"L4parallel={chain['lemma4_parallel_sufficient_fraction']:.1%}, "
+                                    f"server={chain['server_parallel_condition_holds']}, "
                                     f"-<g,P>={chain['lemma6_projection']:+.3e}, "
                                     f"observed_Q={off_objective - objective:+.3e}",
                                     flush=True,

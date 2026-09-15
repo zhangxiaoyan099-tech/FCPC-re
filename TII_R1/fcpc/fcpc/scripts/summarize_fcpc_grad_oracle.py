@@ -40,7 +40,8 @@ def main() -> None:
         ].append(row)
 
     print(
-        f"{'round':>5} {'method':>9} {'s':>5} {'L':>6} {'gate':>8} {'-<g,P>':>11} "
+        f"{'round':>5} {'method':>9} {'s':>5} {'L':>6} {'gate':>8} "
+        f"{'L4norm':>7} {'L4par':>7} {'server':>7} {'srv slack':>10} {'-<g,P>':>11} "
         f"{'cos(P,-g)':>11} {'Q(P)':>11} {'Q(Z)':>11} {'obs gain':>11} "
         f"{'||e||':>10} {'epsP':>10} {'qP':>9} {'qZ':>9} {'qZ-LCB':>9} "
         f"{'qP-eps':>9} {'Q(P)>0':>8} {'Q(Z)>0':>8} {'obs>0':>7}"
@@ -53,6 +54,10 @@ def main() -> None:
         print(
             f"{round_index:5d} {method:>9} {step_scale:5.2g} {smoothness_l:6.2g} "
             f"{mean('proxy_gate_fraction'):8.1%} "
+            f"{mean('lemma4_sufficient_fraction'):7.1%} "
+            f"{mean('lemma4_parallel_sufficient_fraction'):7.1%} "
+            f"{mean('server_parallel_condition_holds'):7.1%} "
+            f"{mean('server_parallel_condition_slack'):10.3e} "
             f"{mean('lemma6_projection'):11.3e} "
             f"{mean('P_t_descent_cosine'):11.4f} "
             f"{mean('Q_proxy_vs_baseline'):11.3e} "

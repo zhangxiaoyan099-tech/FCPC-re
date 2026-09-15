@@ -243,7 +243,7 @@ w^{t+1}
 3. **类别条件梯度有界：** $\|g_y(w)\|\le G$。
 4. **历史代理误差可控：** 历史噪声、本地漂移、优化器变换、旧正则和陈旧性形成的残差有界。
 5. **当前本地执行误差可控：** 当前多步优化方向与轮初真实客户端梯度之差有界。
-6. **代理下降条件：** 引理4A的模型余量为正，或引理4B的安全门控只接纳可认证的代理。
+6. **代理下降条件：** 引理4B的有害平行投影余量或引理6的服务器整体余量为正；安全门控只作为最后的可选增强。
 7. **有限中心强度：** $\beta_t,s_t,\xi_t$ 与裁剪半径使二阶平滑代价不超过一阶下降收益。
 
 引理1是分布恒等式；引理2依赖标签偏移；引理3和引理5是代数分解；引理4、引理6及加速定理是条件结论。
@@ -545,53 +545,90 @@ m_p^t
 
 该条件是充分而非必要条件。冻结检查点实验中它可能由于三角不等式累计过松而不成立，即使直接观测的 $m_p^t=-\langle g_t,d_p^t\rangle$ 仍为正。因此它保留为“JSD 配对残差如何帮助代理方向”的解释桥梁，但不再要求所有实际配对无条件满足。
 
-### 8.2 引理4B：近似全局梯度下的安全门控
+### 8.2 引理4B：有害平行投影条件
 
-令服务器可获得一个全局梯度代理 $\widehat g_t$，并假设存在可校准误差界
-
-\[
-\|\widehat g_t-g_t\|\le\nu_t.
-\]
-
-给定安全余量 $\tau_t\ge0$，定义方向门控
+记
 
 \[
-\boxed{
-\phi_{p,t}
-=\mathbf 1\left\{
--\langle\widehat g_t,d_p^t\rangle
-\ge(\nu_t+\tau_t)\|d_p^t\|
-\right\}.
-}
+e_{p,t}^{g}=g_p^t-g_t,
+\qquad
+e_{p,t}^{r}=r_p^t+r_{p,t}^{\mathrm{hist\mbox{-}step}}.
 \]
 
-**引理4B。** 对任一满足 $\phi_{p,t}=1$ 的配对，
+对 $\|g_t\|>0$，只提取两个误差沿全局梯度方向的有害部分：
 
 \[
 \boxed{
--\langle g_t,d_p^t\rangle
-\ge\tau_t\|d_p^t\|\ge0.
+\delta_{p,t}^{\parallel}
+=\frac{[-\langle g_t,e_{p,t}^{g}\rangle]_+}{\|g_t\|},
+\qquad
+\varepsilon_{p,t}^{\parallel}
+=\frac{[\langle g_t,e_{p,t}^{r}\rangle]_+}{\|g_t\|},
 }
 \]
 
-**证明。** 由 Cauchy--Schwarz 不等式，
+其中 $[x]_+=\max\{x,0\}$。与完整向量模长不同，与 $g_t$ 正交或帮助下降的误差不会进入这两个量。
+
+**引理4B。** 有利余量严格满足
+
+\[
+\boxed{
+m_p^t=-\langle g_t,d_p^t\rangle
+\ge
+\bar\gamma_p^t\|g_t\|
+\left[
+\|g_t\|-\delta_{p,t}^{\parallel}
+-\frac{\varepsilon_{p,t}^{\parallel}}{\bar\gamma_p^t}
+\right].
+}
+\]
+
+因而若
+
+\[
+\boxed{
+\|g_t\|>
+\delta_{p,t}^{\parallel}
++\frac{\varepsilon_{p,t}^{\parallel}}{\bar\gamma_p^t},
+}
+\]
+
+则 $m_p^t>0$。
+
+**证明。** 由引理3的严格分解，
 
 \[
 \begin{aligned}
--\langle g_t,d_p^t\rangle
-&=-\langle\widehat g_t,d_p^t\rangle
-+\langle\widehat g_t-g_t,d_p^t\rangle\\
-&\ge(\nu_t+\tau_t)\|d_p^t\|
--\|\widehat g_t-g_t\|\|d_p^t\|\\
-&\ge\tau_t\|d_p^t\|.
+m_p^t
+&=\bar\gamma_p^t\|g_t\|^2
++\bar\gamma_p^t\langle g_t,e_{p,t}^{g}\rangle
+-\langle g_t,e_{p,t}^{r}\rangle\\
+&\ge
+\bar\gamma_p^t\|g_t\|^2
+-\bar\gamma_p^t\|g_t\|\delta_{p,t}^{\parallel}
+-\|g_t\|\varepsilon_{p,t}^{\parallel},
 \end{aligned}
 \]
 
-oracle 审计取 $\widehat g_t=g_t$、$\nu_t=0$，并用严格条件 $-\langle g_t,d_p^t\rangle>0$。该版本用于验证“若删除有害代理，后续链条能否恢复”，不可直接部署。正式算法需要用历史服务器更新等可获得信息构造 $\widehat g_t$，并在独立数据上给出或校准 $\nu_t$。
+整理即得。
+
+并且
+
+\[
+\delta_{p,t}^{\parallel}\le\|g_p^t-g_t\|=\delta_p^t,
+\qquad
+\varepsilon_{p,t}^{\parallel}
+\le\varepsilon_p^t+\zeta_p^t.
+\]
+
+所以引理4B严格不比引理4A使用的全范数界更松。它是当前主逐对条件；引理4A保留为无需方向信息的保守推论以及 JSD 到完整梯度偏差的入口。
 
 ---
 
 ## 9. 引理5：精确 proximal 把代理方向传入客户端
+
+主证明先取 $\phi_{p,t}=1$，即不使用方向门控；本节公式保留
+$\phi_{p,t}$，只是为了兼容第10.2节最后给出的可选安全增强。
 
 假设当轮 $\eta_t,\beta_t$ 在本地步内固定。proximal 一阶最优条件给出
 
@@ -735,9 +772,9 @@ r_{p,t}^{\mathrm{current\mbox{-}step}}
 
 ---
 
-## 10. 引理6：服务器保留有利下降投影
+## 10. 引理6：服务器整体平行投影条件
 
-定义服务器更新中由梯度代理中心显式产生的分量
+定义服务器更新中由代理中心显式产生的分量
 
 \[
 P_t
@@ -745,52 +782,188 @@ P_t
 \omega_{p,t}\bar\lambda_{p,t}d_p^t.
 \]
 
-**引理6。** 若每个开启的代理满足引理4A，或由引理4B的安全门控接纳，且 $\bar\lambda_{p,t}\ge0$，则
+这里不再要求每一对分别满足引理4。令
+
+\[
+C_t
+=\sum_{p\in M_t}
+\omega_{p,t}\bar\lambda_{p,t}\bar\gamma_p^t,
+\]
+
+\[
+E_t^{g}
+=\sum_{p\in M_t}
+\omega_{p,t}\bar\lambda_{p,t}\bar\gamma_p^t
+(g_p^t-g_t),
+\]
+
+\[
+E_t^{r}
+=\sum_{p\in M_t}
+\omega_{p,t}\bar\lambda_{p,t}
+e_{p,t}^{r}.
+\]
+
+由引理3逐对代入可得严格恒等式
 
 \[
 \boxed{
--\langle g_t,P_t\rangle
-=\sum_{p\in M_t}
-\omega_{p,t}\bar\lambda_{p,t}m_p^t
-\ge0.
+P_t=-C_tg_t-E_t^{g}+E_t^{r}.
 }
 \]
 
-若至少存在一个 $\bar\lambda_{p,t}>0$ 且 $m_p^t>0$ 的开启代理，则上式严格大于零。
-
-**证明。**
-
-\[
-\begin{aligned}
--\langle g_t,P_t\rangle
-&=-\left\langle
-g_t,\sum_p\omega_{p,t}\bar\lambda_{p,t}d_p^t
-\right\rangle\\
-&=\sum_p\omega_{p,t}\bar\lambda_{p,t}
-[-\langle g_t,d_p^t\rangle]\\
-&=\sum_p\omega_{p,t}\bar\lambda_{p,t}m_p^t\ge0.
-\end{aligned}
-\]
-
-结合引理4A，
+对 $\|g_t\|>0$，定义服务器聚合以后真正有害的平行分量
 
 \[
 \boxed{
-\begin{aligned}
+\delta_{\mathrm{srv},t}^{\parallel}
+=\frac{[-\langle g_t,E_t^{g}\rangle]_+}{\|g_t\|},
+\qquad
+\varepsilon_{\mathrm{srv},t}^{\parallel}
+=\frac{[\langle g_t,E_t^{r}\rangle]_+}{\|g_t\|}.
+}
+\]
+
+**引理6。** 服务器显式代理投影满足
+
+\[
+\boxed{
 -\langle g_t,P_t\rangle
 \ge
-\sum_p\omega_{p,t}\bar\lambda_{p,t}\bar\gamma_p^t\|g_t\|
+\|g_t\|
 \left[
-\|g_t\|-\delta_p^t
--\frac{\varepsilon_p^t+\zeta_p^t}{\bar\gamma_p^t}
+C_t\|g_t\|
+-\delta_{\mathrm{srv},t}^{\parallel}
+-\varepsilon_{\mathrm{srv},t}^{\parallel}
 \right].
-\end{aligned}
 }
 \]
 
-该结论解决的是“下降投影是否在聚合中抵消”。只要每项投影非负，它们作为标量相加时不会抵消。其他正交分量仍可能抵消或增大更新范数，所以引理6不声称完整向量范数被保留。
+因此，只要
 
-当前正式 FCPC-grad 仍令 $\phi_{p,t}=1$，没有访问真实 $g_t$。新增 FCPC-grad-oracle 冻结检查点审计使用真实经验全局梯度，只承担机制诊断；它不能被描述成可部署算法。
+\[
+\boxed{
+C_t\|g_t\|
+>
+\delta_{\mathrm{srv},t}^{\parallel}
++\varepsilon_{\mathrm{srv},t}^{\parallel},
+}
+\]
+
+就有 $-\langle g_t,P_t\rangle>0$。
+
+**证明。** 由严格恒等式，
+
+\[
+\begin{aligned}
+-\langle g_t,P_t\rangle
+&=C_t\|g_t\|^2
++\langle g_t,E_t^{g}\rangle
+-\langle g_t,E_t^{r}\rangle\\
+&\ge
+C_t\|g_t\|^2
+-\|g_t\|\delta_{\mathrm{srv},t}^{\parallel}
+-\|g_t\|\varepsilon_{\mathrm{srv},t}^{\parallel}.
+\end{aligned}
+\]
+
+该条件允许少数配对的 $m_p^t$ 为负；只要经过 $\omega_{p,t}\bar\lambda_{p,t}$ 加权后的服务器整体有害投影小于主下降信号即可。这比“每对都必须有利”更贴近实际聚合。
+
+### 10.1 加权 JS 如何进入服务器整体条件
+
+定义配对梯度异质性
+
+\[
+H_t(M_t)=\sum_p\omega_{p,t}\|g_p^t-g_t\|^2,
+\]
+
+以及系数二阶矩
+
+\[
+V_{\lambda\gamma,t}
+=\sum_p\omega_{p,t}
+(\bar\lambda_{p,t}\bar\gamma_p^t)^2.
+\]
+
+加权 Cauchy--Schwarz 给出
+
+\[
+\boxed{
+\|E_t^{g}\|^2
+\le V_{\lambda\gamma,t}H_t(M_t).
+}
+\]
+
+在引理2的纯标签偏移条件下，
+
+\[
+H_t(M_t)\le2G^2R_t(M_t),
+\]
+
+所以
+
+\[
+\boxed{
+\|E_t^{g}\|
+\le
+G\sqrt{2V_{\lambda\gamma,t}R_t(M_t)}.
+}
+\]
+
+最大化加权 JS 互补收益等价于最小化 $R_t(M_t)$，因此它明确缩小服务器条件中的梯度异质性误差上界。
+
+同理，定义
+
+\[
+A_t^{r}(M_t)=\sum_p\omega_{p,t}\|e_{p,t}^{r}\|^2,
+\qquad
+V_{\lambda,t}=\sum_p\omega_{p,t}\bar\lambda_{p,t}^2,
+\]
+
+则
+
+\[
+\|E_t^{r}\|
+\le\sqrt{V_{\lambda,t}A_t^{r}(M_t)}.
+\]
+
+从而得到一个完全由二阶量组成、较保守但可连接 JSD 的服务器充分条件：
+
+\[
+\boxed{
+C_t\|g_t\|
+>
+G\sqrt{2V_{\lambda\gamma,t}R_t(M_t)}
++\sqrt{V_{\lambda,t}A_t^{r}(M_t)}.
+}
+\]
+
+### 10.2 最后的可选安全门控推论
+
+主证明首先研究无门控的服务器整体条件，即 $\phi_{p,t}=1$。如果某些历史代理持续破坏该条件，再引入门控。令服务器梯度代理满足
+
+\[
+\|\widehat g_t-g_t\|\le\nu_t,
+\]
+
+并定义
+
+\[
+\phi_{p,t}
+=\mathbf 1\left\{
+-\langle\widehat g_t,d_p^t\rangle
+\ge(\nu_t+\tau_t)\|d_p^t\|
+\right\}.
+\]
+
+由 Cauchy--Schwarz，任一开启代理满足
+
+\[
+-\langle g_t,d_p^t\rangle
+\ge\tau_t\|d_p^t\|\ge0.
+\]
+
+再结合引理5中 $\bar\lambda_{p,t}\ge0$，可推出服务器投影非负。oracle 取 $\widehat g_t=g_t,\nu_t=0$，只用于证明和诊断门控上限；正式 FCPC-grad 的主结论不依赖 oracle。
 
 ---
 
@@ -1139,11 +1312,12 @@ FCPC-grad 每轮约 $13.06$ 秒，FedAvg 约 $8.90$ 秒；200轮通信量约为 
 1. 加权 KL–JS 恒等式和最大权匹配等价目标；
 2. 纯标签偏移下的标签分布—配对梯度偏差上界；
 3. 包含 $H_i\ne H_j,\gamma_i\ne\gamma_j$ 的历史代理严格分解；
-4. 历史分解充分条件，以及近似全局梯度误差界下的安全门控条件；
-5. 精确 proximal 以显式非负系数传递历史中心和经过门控的代理方向；
-6. 逐对下降条件成立或安全门控开启时，服务器保留代理的非负有利投影；
+4. 历史代理的严格分解、保守全范数条件与更紧的有害平行投影条件；
+5. 精确 proximal 以显式非负系数传递历史中心和代理方向；
+6. 服务器整体平行投影余量为正时，聚合后的代理分量保留严格有利方向；
 7. 一阶收益超过二阶平滑代价时的条件单轮增益；
 8. 光滑非凸有限轮界和 PL 条件下的局部收缩解释。
+9. 若另有可验证的全局梯度代理误差界，则可在主证明之后加入安全门控推论。
 
 ### 16.2 不能写成无条件结论
 
@@ -1159,8 +1333,8 @@ FCPC-grad 每轮约 $13.06$ 秒，FedAvg 约 $8.90$ 秒；200轮通信量约为 
 ### 16.3 提交前必须补齐
 
 1. 记录 $H_i^t,\gamma_i^t$，量化历史和当前两个 step-imbalance residual；
-2. 在冻结检查点记录 $\langle g_t,d_p^t\rangle$、有利配对比例和代理余量；
-3. 分别记录方向门控 $\phi_{p,t}$、裁剪比例 $\chi_{p,t}$、$\|P_t\|$、轨迹响应和单轮收益差；
+2. 在冻结检查点同时记录逐对平行投影余量和服务器整体平行投影余量；
+3. 主实验先取 $\phi_{p,t}=1$，记录裁剪比例 $\chi_{p,t}$、$\|P_t\|$、轨迹响应和单轮收益差；门控只作为末尾安全消融；
 4. 把 mix0 补到至少三个种子；
 5. 明确各基线的来源、适配差异和调参预算；
 6. 同时报告 AUC、阈值轮数、最终精度、秒/轮和通信量；
@@ -1185,21 +1359,23 @@ FCPC-grad 每轮约 $13.06$ 秒，FedAvg 约 $8.90$ 秒；200轮通信量约为 
 1. 引理1：分布恒等式；
 2. 引理2：梯度桥梁；
 3. 引理3：含 quantity skew 的历史代理分解；
-4. 引理4A：历史代理分解充分条件；引理4B：带误差界的安全门控；
-5. 引理5：proximal 传递门控代理；
-6. 引理6：服务器非负投影保留；
+4. 引理4A：保守全范数充分条件；引理4B：逐对有害平行投影条件；
+5. 引理5：proximal 以非负系数传递代理；
+6. 引理6：服务器整体平行投影条件与加权 JS 上界；
 7. 条件单轮加速；
 8. 非凸有限轮与 PL 推论；
-9. sampling、unpaired、LDP 和 step-imbalance residual。
+9. 最后的可选安全门控推论；
+10. sampling、unpaired、LDP 和 step-imbalance residual。
 
 实验部分：
 
 1. mix0 因果消融；
 2. 配对策略消融；
-3. $\beta,\xi,s$ 与裁剪消融；
+3. $\beta,\xi,s$ 与裁剪消融，首先报告无门控主算法；
 4. 三种子基线比较；
 5. 轮数、墙钟时间和通信代价分开报告；
-6. $R,H,D,U$ 与代理下降投影机制指标。
+6. $R,H,D,U$、逐对平行余量与服务器整体余量；
+7. 最后单列 oracle/可部署门控的安全上限实验，不能与主算法证据混写。
 
 ---
 
