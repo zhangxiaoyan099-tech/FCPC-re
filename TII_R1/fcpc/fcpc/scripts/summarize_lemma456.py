@@ -10,6 +10,16 @@ from pathlib import Path
 import numpy as np
 
 
+def _as_float(value: object) -> float:
+    """Parse numeric CSV cells as well as DictWriter's True/False strings."""
+    text = str(value).strip().lower()
+    if text == "true":
+        return 1.0
+    if text == "false":
+        return 0.0
+    return float(text)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -38,7 +48,7 @@ def main() -> None:
         "obs gain    eps_P     q(proxy)    q(actual)  q-gate  bound"
     )
     for (round_number, smoothness_l), values in sorted(grouped.items()):
-        mean = lambda name: float(np.mean([float(row[name]) for row in values]))
+        mean = lambda name: float(np.mean([_as_float(row[name]) for row in values]))
         print(
             f"{round_number:5d} {smoothness_l:6.2g} "
             f"{100*mean('lemma4_sufficient_fraction'):7.2f} "
