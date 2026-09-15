@@ -22,6 +22,7 @@ from scripts.run_at_m_audit import (
     checkpoint_signature,
     choose_pairing,
     clone_state,
+    assert_finite_state,
     compute_client_gradients,
     create_neutral_checkpoints,
     evaluate,
@@ -515,6 +516,10 @@ def run(config: Mapping[str, Any], *, reuse_checkpoints: bool) -> dict[str, str]
                     "neutral checkpoints predate the Lemma 4--6 audit; rerun without "
                     "--reuse-checkpoints"
                 )
+            assert_finite_state(
+                checkpoint["model_state"],
+                where=f"loaded neutral checkpoint round {checkpoint_round}",
+            )
             gradients = compute_client_gradients(
                 config, data, checkpoint["model_state"], device
             )

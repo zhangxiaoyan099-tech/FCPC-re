@@ -56,11 +56,13 @@ audit:
     local_epochs: 1
     max_batches_per_client: 6
     require_equal_steps: true
-    freeze_batchnorm_stats: true
+    # Warmup must learn valid BatchNorm running statistics.  They are frozen
+    # only during the matched one-round counterfactual replays.
+    freeze_batchnorm_stats: false
     num_workers: 4
     optimizer:
       name: sgd
-      lr: 0.03
+      lr: 0.01
       momentum: 0.0
       weight_decay: 0.0
 
@@ -79,6 +81,6 @@ audit:
     center_max_relative_distance: 0.05
     optimizer:
       name: sgd
-      lr: 0.03
+      lr: 0.01
       momentum: 0.0
       weight_decay: 0.0

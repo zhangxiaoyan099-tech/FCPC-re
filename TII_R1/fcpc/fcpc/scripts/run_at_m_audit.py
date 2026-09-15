@@ -187,6 +187,19 @@ def clone_state(state: Mapping[str, object]) -> dict[str, object]:
     return result
 
 
+def assert_finite_state(state: Mapping[str, object], *, where: str) -> None:
+    """Fail fast instead of allowing a NaN checkpoint to contaminate an audit."""
+    import torch
+
+    for name, value in state.items():
+        if (
+            hasattr(value, "is_floating_point")
+            and value.is_floating_point()
+            and not bool(torch.isfinite(value).all().item())
+        ):
+            raise FloatingPointError(f"non-finite tensor {name!r} at {where}")
+
+
 def _dataset_kwargs(dataset_cfg: Mapping[str, Any]) -> dict[str, Any]:
     excluded = {
         "name",
@@ -469,11 +482,18 @@ def create_neutral_checkpoints(
                     f"{metrics['processed_batches']} batches, expected {max_batches}; "
                     "reduce warmup.batch_size or max_batches_per_client so H_i=H"
                 )
+            assert_finite_state(
+                state,
+                where=f"neutral warmup round {round_number}, client {client.client_id}",
+            )
             local_states.append(state)
         global_state = fedavg_aggregate(
             local_states,
             [data["sample_counts"][client_id] for client_id in range(data["num_clients"])],
             weighted=True,
+        )
+        assert_finite_state(
+            global_state, where=f"neutral warmup round {round_number}, server"
         )
         print(f"warmup_round: {round_number}/{max(checkpoints)}", flush=True)
         if round_number in checkpoints:
@@ -553,6 +573,11 @@ def compute_client_gradients(
             else:
                 pieces.append(parameter.grad.detach().float().reshape(-1).cpu().clone())
         gradients[client_id] = torch.cat(pieces)
+        if not bool(torch.isfinite(gradients[client_id]).all().item()):
+            raise FloatingPointError(
+                f"non-finite empirical gradient for client {client_id}; "
+                "the frozen checkpoint is numerically invalid"
+            )
         print(
             f"gradient_probe: client={client_id}, examples={len(indices)}, "
             f"norm={float(gradients[client_id].norm().item()):.6e}",
