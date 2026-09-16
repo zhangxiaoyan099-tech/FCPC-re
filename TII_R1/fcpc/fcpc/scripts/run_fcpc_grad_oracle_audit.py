@@ -30,6 +30,7 @@ from scripts.run_at_m_audit import (
     compute_client_gradients,
     create_neutral_checkpoints,
     evaluate,
+    iter_neutral_checkpoints,
     load_neutral_checkpoint,
     matrices_for_metadata,
     model_factory,
@@ -275,7 +276,12 @@ def run(config: Mapping[str, Any], *, reuse_checkpoints: bool) -> dict[str, str]
     data = prepare_data(config)
     device = select_device(str(config.get("federated", {}).get("device", "auto")))
     print(f"runtime_device: {device}; history_gamma={history_gamma:.6e}", flush=True)
-    if not reuse_checkpoints:
+    stream_checkpoints = bool(audit.get("stream_checkpoints", False))
+    if reuse_checkpoints and stream_checkpoints:
+        raise ValueError(
+            "--reuse-checkpoints and audit.stream_checkpoints cannot be used together"
+        )
+    if not reuse_checkpoints and not stream_checkpoints:
         create_neutral_checkpoints(config, data, checkpoint_dir)
     signature = checkpoint_signature(config)
     metadata = prepare_metadata(
@@ -289,6 +295,14 @@ def run(config: Mapping[str, Any], *, reuse_checkpoints: bool) -> dict[str, str]
     pairing_seeds = [int(value) for value in audit.get("random_pairing_seeds", [0])]
     batch_seeds = [int(value) for value in audit.get("batch_seeds", [100, 101, 102])]
     checkpoints = [int(value) for value in audit.get("checkpoints", [1, 10, 25, 50])]
+    methods = [str(value).lower() for value in audit.get("methods", ["ungated", "oracle"])]
+    unsupported_methods = sorted(set(methods) - {"ungated", "oracle"})
+    if unsupported_methods:
+        raise ValueError(
+            f"unsupported audit.methods: {unsupported_methods}; choices=['ungated', 'oracle']"
+        )
+    if not methods:
+        raise ValueError("audit.methods must contain at least one method")
     l_values = [float(value) for value in audit.get("smoothness_L_values", [0.0])]
     oracle = audit.get("oracle", {})
     min_margin = float(oracle.get("min_margin", 0.0))
@@ -318,10 +332,21 @@ def run(config: Mapping[str, Any], *, reuse_checkpoints: bool) -> dict[str, str]
         metrics_writer.writeheader()
         pair_writer.writeheader()
 
-        for checkpoint_round in checkpoints:
-            checkpoint = load_neutral_checkpoint(
-                checkpoint_dir / f"fedavg_round_{checkpoint_round:03d}.pt", signature
+        if stream_checkpoints:
+            checkpoint_source = iter_neutral_checkpoints(config, data)
+        else:
+            checkpoint_source = (
+                (
+                    checkpoint_round,
+                    load_neutral_checkpoint(
+                        checkpoint_dir / f"fedavg_round_{checkpoint_round:03d}.pt",
+                        signature,
+                    ),
+                )
+                for checkpoint_round in checkpoints
             )
+
+        for checkpoint_round, checkpoint in checkpoint_source:
             if "client_previous_global_states" not in checkpoint:
                 raise ValueError("regenerate neutral checkpoints with broadcast histories")
             assert_finite_state(
@@ -380,10 +405,12 @@ def run(config: Mapping[str, Any], *, reuse_checkpoints: bool) -> dict[str, str]
                         )
 
                         for step_scale in step_scales:
-                            for method, gates in (
-                                ("ungated", all_gates),
-                                ("oracle", oracle_gates),
-                            ):
+                            gate_options = {
+                                "ungated": all_gates,
+                                "oracle": oracle_gates,
+                            }
+                            for method in methods:
+                                gates = gate_options[method]
                                 states, aggregate, effective_betas, clip_scales = (
                                     _replay(
                                         config,

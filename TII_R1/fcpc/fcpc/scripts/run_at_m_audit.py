@@ -370,12 +370,18 @@ def checkpoint_signature(config: Mapping[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def create_neutral_checkpoints(
+def iter_neutral_checkpoints(
     config: Mapping[str, Any],
     data: Mapping[str, Any],
-    checkpoint_dir: Path,
-) -> None:
-    import torch
+):
+    """Yield neutral FedAvg checkpoints as soon as each requested round finishes.
+
+    The streaming form is important for dense audits (for example every five
+    rounds): a ResNet checkpoint also contains every client's previous model
+    and previous broadcast model, so retaining forty checkpoints can consume
+    tens of gigabytes.  Consumers must finish using a yielded checkpoint
+    before requesting the next one.
+    """
 
     seed = int(config.get("seed", 42))
     audit_cfg = config.get("audit", {})
@@ -384,7 +390,6 @@ def create_neutral_checkpoints(
     checkpoints = sorted({int(value) for value in audit_cfg.get("checkpoints", [5, 10, 20, 50])})
     if not checkpoints or checkpoints[0] < 0:
         raise ValueError("audit.checkpoints must contain non-negative rounds")
-    checkpoint_dir.mkdir(parents=True, exist_ok=True)
     set_seed(seed)
     initial_model = model_factory(config, data)
     initial_model.to("cpu")
@@ -414,30 +419,25 @@ def create_neutral_checkpoints(
 
     signature = checkpoint_signature(config)
 
-    def save(round_number: int) -> None:
-        path = checkpoint_dir / f"fedavg_round_{round_number:03d}.pt"
-        torch.save(
-            {
-                "round": round_number,
-                "signature": signature,
-                "model_state": clone_state(global_state),
-                "client_previous_states": {
-                    client.client_id: clone_state(client.previous_state or global_state)
-                    for client in clients
-                },
-                "client_previous_global_states": {
-                    client.client_id: clone_state(
-                        client.previous_global_state or global_state
-                    )
-                    for client in clients
-                },
+    def snapshot(round_number: int) -> dict[str, Any]:
+        return {
+            "round": round_number,
+            "signature": signature,
+            "model_state": clone_state(global_state),
+            "client_previous_states": {
+                client.client_id: clone_state(client.previous_state or global_state)
+                for client in clients
             },
-            path,
-        )
-        print(f"saved_checkpoint: {path}", flush=True)
+            "client_previous_global_states": {
+                client.client_id: clone_state(
+                    client.previous_global_state or global_state
+                )
+                for client in clients
+            },
+        }
 
     if 0 in checkpoints:
-        save(0)
+        yield 0, snapshot(0)
     algorithm = build_algorithm("fedavg")
     device = select_device(str(federated_cfg.get("device", "auto")))
     local_epochs = int(warmup_cfg.get("local_epochs", 1))
@@ -497,7 +497,22 @@ def create_neutral_checkpoints(
         )
         print(f"warmup_round: {round_number}/{max(checkpoints)}", flush=True)
         if round_number in checkpoints:
-            save(round_number)
+            yield round_number, snapshot(round_number)
+
+
+def create_neutral_checkpoints(
+    config: Mapping[str, Any],
+    data: Mapping[str, Any],
+    checkpoint_dir: Path,
+) -> None:
+    """Create reusable on-disk checkpoints for the legacy audit workflow."""
+    import torch
+
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    for round_number, checkpoint in iter_neutral_checkpoints(config, data):
+        path = checkpoint_dir / f"fedavg_round_{round_number:03d}.pt"
+        torch.save(checkpoint, path)
+        print(f"saved_checkpoint: {path}", flush=True)
 
 
 def load_neutral_checkpoint(
