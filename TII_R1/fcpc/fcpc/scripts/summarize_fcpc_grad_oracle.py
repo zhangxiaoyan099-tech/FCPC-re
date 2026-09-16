@@ -10,6 +10,16 @@ from pathlib import Path
 import numpy as np
 
 
+def _as_float(value: object) -> float:
+    """Parse numeric CSV cells and DictWriter's True/False strings."""
+    text = str(value).strip().lower()
+    if text == "true":
+        return 1.0
+    if text == "false":
+        return 0.0
+    return float(text)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("path", nargs="?", default="outputs/fcpc_grad_oracle_seed42/oracle_metrics.csv")
@@ -47,9 +57,11 @@ def main() -> None:
         f"{'qP-eps':>9} {'Q(P)>0':>8} {'Q(Z)>0':>8} {'obs>0':>7}"
     )
     for (round_index, method, step_scale, smoothness_l), values in sorted(grouped.items()):
-        mean = lambda name: float(np.mean([float(row[name]) for row in values]))
+        mean = lambda name: float(
+            np.mean([_as_float(row[name]) for row in values])
+        )
         fraction = lambda name: float(
-            np.mean([float(row[name]) > 0.0 for row in values])
+            np.mean([_as_float(row[name]) > 0.0 for row in values])
         )
         print(
             f"{round_index:5d} {method:>9} {step_scale:5.2g} {smoothness_l:6.2g} "
@@ -67,7 +79,7 @@ def main() -> None:
             f"{mean('epsilon_trajectory_bound'):10.3e} "
             f"{mean('proxy_Q_over_grad_sq'):9.3f} "
             f"{mean('Q_over_grad_sq'):9.3f} "
-            f"{mean('Q_over_grad_sq') - 1.96 * float(np.std([float(row['Q_over_grad_sq']) for row in values], ddof=1 if len(values) > 1 else 0)) / max(len(values), 1) ** 0.5:9.3f} "
+            f"{mean('Q_over_grad_sq') - 1.96 * float(np.std([_as_float(row['Q_over_grad_sq']) for row in values], ddof=1 if len(values) > 1 else 0)) / max(len(values), 1) ** 0.5:9.3f} "
             f"{mean('proxy_minus_epsilon_over_grad_sq'):9.3f} "
             f"{fraction('Q_proxy_vs_baseline'):7.1%} "
             f"{fraction('Q_counterfactual'):7.1%} "
