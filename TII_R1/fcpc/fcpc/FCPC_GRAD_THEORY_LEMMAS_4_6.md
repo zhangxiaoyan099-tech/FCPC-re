@@ -1065,6 +1065,145 @@ Z_t^{(\mathrm{mix0})}
 
 该定理不局限于 FedAvg。将 $B$ 依次取为 FedAvg、FedProx、MOON、FedDyn、FBLG 或 FedCFA，可得到同一比较准则。但理论因果归因最清楚的是 mix0，因为它只移除梯度代理中心；不同算法之间的最终比较主要由公平实验支持。
 
+这里的比较首先是同一 $w^t$ 上的**光滑下降证书比较**。两个光滑上界的大小不同，并不单独推出两次独立训练所得真实损失必然按同样顺序排列；进入实际收敛递推时，应使用下面对 FCPC-grad 自身更新的绝对下降界。
+
+### 11.3 三个引理合并后的整体有利定理
+
+为避免把显式代理方向和真实本地轨迹混为一谈，以下以 `proxy_off` 为最干净的反事实基线。记
+
+\[
+B_t:=\Delta_t^{\mathrm{off}},
+\qquad
+Z_t:=\Delta_t^{\mathrm{grad}}-\Delta_t^{\mathrm{off}},
+\]
+
+并由定义写成
+
+\[
+Z_t=P_t+e_t^{\mathrm{traj}}.
+\]
+
+其中 $P_t$ 是引理5--6给出的显式代理分量，$e_t^{\mathrm{traj}}$ 是共同中心改变后，本地随机梯度轨迹随之改变所产生的响应。定义服务器一阶代理收益
+
+\[
+\boxed{
+\Gamma_t
+:=-\langle g_t,P_t\rangle
+=\sum_{p\in M_t}
+\omega_{p,t}\bar\lambda_{p,t}m_p^t.
+}
+\]
+
+这个等式把三个引理连在一起：引理4给出 $m_p^t$，引理5给出非负的 $\bar\lambda_{p,t}$，引理6完成服务器加权求和。
+
+再定义轨迹响应代价
+
+\[
+\boxed{
+\varepsilon_t^{\mathrm{traj}}
+=
+\big(
+\|g_t\|+L\|B_t\|+L\|P_t\|
+\big)
+\|e_t^{\mathrm{traj}}\|
++\frac L2\|e_t^{\mathrm{traj}}\|^2.
+}
+\]
+
+**定理2（FCPC-grad 的条件整体有利）。** 对任意 $L$-smooth 全局目标，真实反事实修正 $Z_t=P_t+e_t^{\mathrm{traj}}$ 满足
+
+\[
+\boxed{
+\begin{aligned}
+Q_t(Z_t;B_t)
+\ge{}&
+\Gamma_t
+-L\|B_t\|\|P_t\|
+-\frac L2\|P_t\|^2
+-\varepsilon_t^{\mathrm{traj}}.
+\end{aligned}
+}
+\]
+
+因此，只要
+
+\[
+\boxed{
+\Gamma_t
+>
+L\|B_t\|\|P_t\|
++\frac L2\|P_t\|^2
++\varepsilon_t^{\mathrm{traj}},
+}
+\]
+
+就有 $Q_t(Z_t;B_t)>0$，即 FCPC-grad 在该轮的光滑下降证书严格优于同一检查点、同一随机协议下的 `proxy_off`。
+
+**证明。** 先由 $Z_t=P_t+e_t^{\mathrm{traj}}$ 严格展开：
+
+\[
+\begin{aligned}
+Q_t(Z_t;B_t)
+={}&Q_t(P_t;B_t)
+-\langle g_t,e_t^{\mathrm{traj}}\rangle
+-L\langle B_t,e_t^{\mathrm{traj}}\rangle\\
+&-L\langle P_t,e_t^{\mathrm{traj}}\rangle
+-\frac L2\|e_t^{\mathrm{traj}}\|^2.
+\end{aligned}
+\]
+
+又有
+
+\[
+Q_t(P_t;B_t)
+=\Gamma_t
+-L\langle B_t,P_t\rangle
+-\frac L2\|P_t\|^2.
+\]
+
+对四个内积使用 Cauchy--Schwarz，即得所述下界。$\square$
+
+令 $\mathcal F_t$ 表示第 $t$ 轮开始前的历史，$\mathbb E_t[\cdot]=\mathbb E[\cdot\mid\mathcal F_t]$。若存在 $q_t\ge0,\zeta_t\ge0$ 使
+
+\[
+\boxed{
+\mathbb E_t\!\left[
+\Gamma_t
+-L\|B_t\|\|P_t\|
+-\frac L2\|P_t\|^2
+-\varepsilon_t^{\mathrm{traj}}
+\right]
+\ge q_t\|g_t\|^2-\zeta_t,
+}
+\]
+
+并且反事实基线更新满足
+
+\[
+\mathbb E_t\mathcal G_t(B_t)
+\ge c_t^{B}\|g_t\|^2-\epsilon_t^{B},
+\]
+
+那么由恒等式
+
+\[
+\mathcal G_t(B_t+Z_t)
+=\mathcal G_t(B_t)+Q_t(Z_t;B_t)
+\]
+
+得到
+
+\[
+\boxed{
+\mathbb E_t\mathcal G_t(\Delta_t^{\mathrm{grad}})
+\ge
+(c_t^{B}+q_t)\|g_t\|^2
+-(\epsilon_t^{B}+\zeta_t).
+}
+\]
+
+这就是“整体有利”的正式条件：三个引理贡献额外系数 $q_t$，而轨迹误差进入附加项 $\zeta_t$。只有当 $q_t>0$ 且新增误差没有吞没该收益时，才能称为条件加速。
+
 ---
 
 ## 12. 非凸有限轮与 PL 条件加速
@@ -1105,6 +1244,16 @@ F(w^0)-F_{\inf}+\sum_t\epsilon_t
 \]
 
 若 FCPC-grad 在一段训练区间内具有更大的 $c_t$，且没有增加更大的累计 $\epsilon_t$，则其有限轮平均梯度范数界更紧。这支持有限通信轮加速，但不改变一般非凸随机优化的渐近阶。
+
+在定理2的记号下，可以具体取
+
+\[
+c_t=c_t^B+q_t,
+\qquad
+\epsilon_t=\epsilon_t^B+\zeta_t.
+\]
+
+因此，FCPC-grad 相对反事实基线的有限轮优势不是单独由 $m_p^t>0$ 决定，而是由累计额外收益 $\sum_tq_t\|g_t\|^2$ 与累计附加误差 $\sum_t\zeta_t$ 的竞争决定。
 
 ### 12.2 PL 条件下的收缩
 
