@@ -14,6 +14,7 @@ from src.algorithms.fedavg import FedAvgAdapter
 from src.data.split import stratified_holdout_indices
 from src.federated.client import Client
 from src.federated.trainer import Trainer
+from src.fcpc.pairing import PairingResult
 
 
 class StratifiedSplitTests(unittest.TestCase):
@@ -80,6 +81,74 @@ class ClientMetricTests(unittest.TestCase):
             0.01 * metrics["fcpc_raw_loss"],
             places=6,
         )
+
+    def test_local_end_matched_reports_same_cumulative_contraction(self) -> None:
+        torch.manual_seed(4)
+        inputs = torch.randn(8, 2)
+        targets = torch.randint(0, 2, (8,))
+        loader = DataLoader(TensorDataset(inputs, targets), batch_size=4, shuffle=False)
+        model = torch.nn.Linear(2, 2)
+        global_state = {
+            name: value.detach().clone() for name, value in model.state_dict().items()
+        }
+        center = {
+            name: value.detach().clone() for name, value in model.state_dict().items()
+        }
+        client = Client(
+            client_id=0,
+            train_loader=loader,
+            sample_count=8,
+            label_histogram=np.ones(2),
+        )
+        _, metrics = client.local_train(
+            model,
+            FedAvgAdapter(),
+            global_state,
+            paired_previous_state=center,
+            use_fcpc=True,
+            beta=0.2,
+            lr=0.1,
+            optimizer_name="sgd",
+            local_epochs=1,
+            device="cpu",
+            fcpc_update_rule="proximal",
+            fcpc_proximal_frequency="local_end_matched",
+            return_metrics=True,
+        )
+        self.assertEqual(metrics["processed_batches"], 2)
+        self.assertAlmostEqual(
+            metrics["effective_proximal_contraction"],
+            (1.0 / 1.04) ** 2,
+        )
+
+    def test_update_geometry_detects_cancellation(self) -> None:
+        global_state = {"weight": torch.tensor([0.0])}
+        local_states = [
+            {"weight": torch.tensor([1.0])},
+            {"weight": torch.tensor([-1.0])},
+        ]
+        clients = [
+            Client(client_id=0, sample_count=1),
+            Client(client_id=1, sample_count=1),
+        ]
+        pairing = PairingResult(
+            pairs=[(0, 1)], pair_map={0: 1, 1: 0}, unpaired=[]
+        )
+        metrics = Trainer._update_geometry_metrics(
+            global_state=global_state,
+            aggregate_state={"weight": torch.tensor([0.0])},
+            selected_client_ids=[0, 1],
+            client_states=local_states,
+            clients=clients,
+            pairing=pairing,
+            parameter_names={"weight"},
+            weighted=True,
+        )
+        self.assertAlmostEqual(metrics["client_update_second_moment"], 1.0)
+        self.assertAlmostEqual(metrics["client_update_variance"], 1.0)
+        self.assertAlmostEqual(metrics["server_update_norm"], 0.0)
+        self.assertAlmostEqual(metrics["update_cancellation_fraction"], 1.0)
+        self.assertAlmostEqual(metrics["mean_pair_update_disagreement"], 4.0)
 
 
 class LearningRateScheduleTests(unittest.TestCase):

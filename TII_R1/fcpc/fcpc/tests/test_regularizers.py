@@ -14,6 +14,7 @@ from src.fcpc.regularizer import (
     fcpc_regularization,
     pair_update_proxy_center,
     proximal_center_step,
+    scale_state_center_from_global,
     state_l2_distance,
     weighted_state_center,
 )
@@ -147,6 +148,38 @@ class RegularizerGradientTests(unittest.TestCase):
         self.assertAlmostEqual(left_factor, expected_factor)
         self.assertAlmostEqual(right_factor, expected_factor)
         self.assertTrue(torch.allclose(after, before * expected_factor))
+
+    def test_matched_local_end_proximal_has_repeated_contraction(self) -> None:
+        model = torch.nn.Linear(1, 1, bias=False)
+        with torch.no_grad():
+            model.weight.fill_(4.0)
+        center = {"weight": torch.tensor([[1.0]])}
+        factor = proximal_center_step(
+            dict(model.named_parameters()),
+            center,
+            beta=0.5,
+            learning_rate=0.2,
+            repeat_count=3,
+        )
+        expected = (1.0 / 1.2) ** 3
+        self.assertAlmostEqual(factor, expected)
+        self.assertTrue(
+            torch.allclose(model.weight, center["weight"] + expected * torch.tensor([[3.0]]))
+        )
+
+    def test_center_direction_can_be_reversed_without_changing_norm(self) -> None:
+        global_state = {"weight": torch.tensor([2.0, -1.0])}
+        center = {"weight": torch.tensor([5.0, 3.0])}
+        reversed_center = scale_state_center_from_global(
+            center, global_state, scale=-1.0
+        )
+        self.assertTrue(
+            torch.allclose(reversed_center["weight"], torch.tensor([-1.0, -5.0]))
+        )
+        self.assertAlmostEqual(
+            state_l2_distance(center, global_state),
+            state_l2_distance(reversed_center, global_state),
+        )
 
     def test_center_clipping_enforces_global_radius(self) -> None:
         global_state = {

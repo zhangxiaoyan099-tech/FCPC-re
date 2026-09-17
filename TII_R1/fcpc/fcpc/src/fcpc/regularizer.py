@@ -200,6 +200,7 @@ def proximal_center_step(
     *,
     beta: float,
     learning_rate: float,
+    repeat_count: int = 1,
 ) -> float:
     """Apply the exact proximal map of ``beta * ||w - center||^2``.
 
@@ -207,6 +208,12 @@ def proximal_center_step(
     provisional parameter ``u`` it performs
 
     ``w_next = (u + 2 * lr * beta * center) / (1 + 2 * lr * beta)``.
+
+    ``repeat_count`` applies the closed-form interpolation associated with
+    repeating the same proximal map that many times while holding the center
+    fixed.  It is used by the causal ablation that moves all proximal pulls to
+    the end of local training while matching the cumulative contraction
+    ``(1 + 2 * lr * beta) ** (-repeat_count)``.
 
     If two clients use the same center, beta, and learning rate, their
     provisional disagreement is therefore multiplied by the returned factor
@@ -216,13 +223,21 @@ def proximal_center_step(
     """
     beta = float(beta)
     learning_rate = float(learning_rate)
+    repeat_count = int(repeat_count)
     if beta < 0.0:
         raise ValueError("beta must be non-negative")
     if learning_rate < 0.0:
         raise ValueError("learning_rate must be non-negative")
+    if repeat_count < 0:
+        raise ValueError("repeat_count must be non-negative")
     denominator = 1.0 + 2.0 * learning_rate * beta
-    contraction = 1.0 / denominator
-    if center_state is None or beta == 0.0 or learning_rate == 0.0:
+    contraction = (1.0 / denominator) ** repeat_count
+    if (
+        center_state is None
+        or beta == 0.0
+        or learning_rate == 0.0
+        or repeat_count == 0
+    ):
         return contraction
 
     import torch
@@ -246,6 +261,45 @@ def proximal_center_step(
                 )
             current_value.mul_(contraction).add_(center_value, alpha=center_weight)
     return contraction
+
+
+def scale_state_center_from_global(
+    center_state: Mapping[str, object],
+    global_state: Mapping[str, object],
+    *,
+    scale: float,
+) -> dict[str, object]:
+    """Scale a center displacement around the current global model.
+
+    ``scale=1`` preserves the center, ``scale=0`` returns the global model,
+    and ``scale=-1`` reverses the direction while preserving its norm.  This
+    is a causal negative control for testing whether the historical update's
+    sign, rather than merely its magnitude, explains convergence gains.
+    """
+    scale = float(scale)
+    transformed: dict[str, object] = {}
+    for name, global_value in global_state.items():
+        center_value = center_state.get(name, global_value)
+        compatible_float = (
+            hasattr(global_value, "shape")
+            and hasattr(center_value, "shape")
+            and tuple(global_value.shape) == tuple(center_value.shape)
+            and hasattr(global_value, "is_floating_point")
+            and global_value.is_floating_point()
+        )
+        if compatible_float:
+            center_value = center_value.to(
+                device=global_value.device,
+                dtype=global_value.dtype,
+            )
+            transformed[name] = (
+                global_value + scale * (center_value - global_value)
+            ).detach().cpu().clone()
+        elif hasattr(global_value, "detach"):
+            transformed[name] = global_value.detach().cpu().clone()
+        else:
+            transformed[name] = global_value
+    return transformed
 
 
 def state_l2_norm(

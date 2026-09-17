@@ -23,6 +23,7 @@ from src.fcpc.regularizer import (
     blend_state_centers,
     clip_state_center_to_global,
     pair_update_proxy_center,
+    scale_state_center_from_global,
     state_l2_distance,
     state_l2_norm,
     weighted_state_center,
@@ -93,6 +94,12 @@ class Trainer:
             "grad_center_mix": float(fcpc_cfg.get("grad_center_mix", 0.0)),
             "grad_center_step_scale": float(
                 fcpc_cfg.get("grad_center_step_scale", 1.0)
+            ),
+            "grad_center_direction": str(
+                fcpc_cfg.get("grad_center_direction", "real")
+            ),
+            "proximal_frequency": str(
+                fcpc_cfg.get("proximal_frequency", "batch")
             ),
             "pairing_matrix_shape": tuple(matrix.shape),
             "jsdn_shape": tuple(matrix.shape),
@@ -279,15 +286,21 @@ class Trainer:
         reference_strategy = str(
             fcpc_cfg.get("reference_strategy", "partner")
         ).lower()
-        if reference_strategy not in {"partner", "pair_center", "pair_grad_center"}:
+        if reference_strategy not in {
+            "partner",
+            "global_center",
+            "pair_center",
+            "pair_grad_center",
+        }:
             raise ValueError(
-                "fcpc.reference_strategy must be 'partner', 'pair_center', "
-                "or 'pair_grad_center'"
+                "fcpc.reference_strategy must be 'partner', 'global_center', "
+                "'pair_center', or 'pair_grad_center'"
             )
         fcpc_update_rule = str(fcpc_cfg.get("update_rule", "penalty")).lower()
         if fcpc_update_rule not in {"penalty", "proximal"}:
             raise ValueError("fcpc.update_rule must be 'penalty' or 'proximal'")
         if fcpc_update_rule == "proximal" and reference_strategy not in {
+            "global_center",
             "pair_center",
             "pair_grad_center",
         }:
@@ -298,6 +311,20 @@ class Trainer:
         grad_center_step_scale = float(
             fcpc_cfg.get("grad_center_step_scale", 1.0)
         )
+        grad_center_direction = str(
+            fcpc_cfg.get("grad_center_direction", "real")
+        ).lower()
+        if grad_center_direction not in {"real", "shuffled", "reversed"}:
+            raise ValueError(
+                "fcpc.grad_center_direction must be 'real', 'shuffled', or 'reversed'"
+            )
+        proximal_frequency = str(
+            fcpc_cfg.get("proximal_frequency", "batch")
+        ).lower()
+        if proximal_frequency not in {"batch", "local_end_matched"}:
+            raise ValueError(
+                "fcpc.proximal_frequency must be 'batch' or 'local_end_matched'"
+            )
         if not 0.0 <= grad_center_mix <= 1.0:
             raise ValueError("fcpc.grad_center_mix must be in [0, 1]")
         if grad_center_step_scale < 0.0:
@@ -327,6 +354,12 @@ class Trainer:
                 "fcpc_update_rule",
                 "grad_center_mix",
                 "grad_center_step_scale",
+                "grad_center_direction",
+                "proximal_frequency",
+                "mean_effective_proximal_contraction",
+                "min_effective_proximal_contraction",
+                "max_effective_proximal_contraction",
+                "std_effective_proximal_contraction",
                 "mean_grad_proxy_distance",
                 "grad_proxy_available_fraction",
                 "center_clip_limit",
@@ -355,6 +388,11 @@ class Trainer:
                 "train_fcpc_raw_loss",
                 "train_fcpc_weighted_loss",
                 "train_total_loss",
+                "client_update_second_moment",
+                "client_update_variance",
+                "server_update_norm",
+                "update_cancellation_fraction",
+                "mean_pair_update_disagreement",
                 "pairing_strategy",
                 "pair_count",
                 "unpaired_count",
@@ -532,7 +570,14 @@ class Trainer:
                 fcpc_cfg.get("center_max_relative_distance"),
                 global_parameter_norm,
             )
-            if reference_strategy in {"pair_center", "pair_grad_center"}:
+            if reference_strategy == "global_center":
+                for client_a, client_b in pairing.pairs:
+                    reference_states[client_a] = global_state
+                    reference_states[client_b] = global_state
+                    center_distances.append(0.0)
+                    center_clip_scales.append(1.0)
+            elif reference_strategy in {"pair_center", "pair_grad_center"}:
+                pair_payloads = []
                 for client_a, client_b in pairing.pairs:
                     history_center = weighted_state_center(
                         previous_states.get(client_a),
@@ -541,7 +586,7 @@ class Trainer:
                         clients[client_b].sample_count,
                         fallback_state=global_state,
                     )
-                    center = history_center
+                    gradient_center = global_state
                     if reference_strategy == "pair_grad_center":
                         for client_id in (client_a, client_b):
                             if (
@@ -559,6 +604,45 @@ class Trainer:
                             global_state,
                             step_scale=grad_center_step_scale,
                         )
+                    pair_payloads.append(
+                        (client_a, client_b, history_center, gradient_center)
+                    )
+
+                if (
+                    reference_strategy == "pair_grad_center"
+                    and grad_center_direction == "shuffled"
+                    and len(pair_payloads) > 1
+                ):
+                    # Rotate the round's proxy directions by a deterministic,
+                    # non-zero offset.  This preserves the multiset of norms
+                    # while destroying the direction-to-pair association.
+                    rng = np.random.default_rng(seed + 1_000_003 * (round_idx + 1))
+                    offset = int(rng.integers(1, len(pair_payloads)))
+                    proxy_centers = [payload[3] for payload in pair_payloads]
+                    pair_payloads = [
+                        (
+                            client_a,
+                            client_b,
+                            history_center,
+                            proxy_centers[(index + offset) % len(proxy_centers)],
+                        )
+                        for index, (
+                            client_a,
+                            client_b,
+                            history_center,
+                            _,
+                        ) in enumerate(pair_payloads)
+                    ]
+
+                for client_a, client_b, history_center, gradient_center in pair_payloads:
+                    center = history_center
+                    if reference_strategy == "pair_grad_center":
+                        if grad_center_direction == "reversed":
+                            gradient_center = scale_state_center_from_global(
+                                gradient_center,
+                                global_state,
+                                scale=-1.0,
+                            )
                         grad_proxy_distances.append(
                             state_l2_distance(
                                 gradient_center,
@@ -593,7 +677,11 @@ class Trainer:
                 for client_id in selected:
                     client = clients[client_id]
                     pair_id = pairing.pair_map.get(client_id)
-                    if reference_strategy in {"pair_center", "pair_grad_center"}:
+                    if reference_strategy in {
+                        "global_center",
+                        "pair_center",
+                        "pair_grad_center",
+                    }:
                         paired_previous = reference_states.get(client_id)
                     else:
                         paired_previous = previous_states.get(pair_id) if pair_id is not None else None
@@ -634,6 +722,7 @@ class Trainer:
                         max_batches=max_batches,
                         mean_sample_count=mean_sample_count,
                         fcpc_update_rule=fcpc_update_rule,
+                        fcpc_proximal_frequency=proximal_frequency,
                         return_metrics=True,
                     )
                     self._assert_finite_state(
@@ -643,6 +732,16 @@ class Trainer:
                     local_states.append(state)
                     local_metrics.append(metrics)
                 default_global_state = server.aggregate(selected, local_states)
+                update_geometry = self._update_geometry_metrics(
+                    global_state=global_state,
+                    aggregate_state=default_global_state,
+                    selected_client_ids=selected,
+                    client_states=local_states,
+                    clients=clients,
+                    pairing=pairing,
+                    parameter_names=parameter_names,
+                    weighted=server.aggregation_weighted,
+                )
                 custom_global_state = algorithm.aggregate(
                     selected_client_ids=selected,
                     client_states=local_states,
@@ -742,6 +841,70 @@ class Trainer:
                         if reference_strategy == "pair_grad_center"
                         else 0.0
                     ),
+                    "grad_center_direction": (
+                        grad_center_direction
+                        if reference_strategy == "pair_grad_center"
+                        else "none"
+                    ),
+                    "proximal_frequency": (
+                        proximal_frequency if fcpc_update_rule == "proximal" else "none"
+                    ),
+                    "mean_effective_proximal_contraction": (
+                        float(
+                            np.mean(
+                                [
+                                    metrics.get(
+                                        "effective_proximal_contraction", 1.0
+                                    )
+                                    for metrics in local_metrics
+                                ]
+                            )
+                        )
+                        if local_metrics
+                        else 1.0
+                    ),
+                    "min_effective_proximal_contraction": (
+                        float(
+                            np.min(
+                                [
+                                    metrics.get(
+                                        "effective_proximal_contraction", 1.0
+                                    )
+                                    for metrics in local_metrics
+                                ]
+                            )
+                        )
+                        if local_metrics
+                        else 1.0
+                    ),
+                    "max_effective_proximal_contraction": (
+                        float(
+                            np.max(
+                                [
+                                    metrics.get(
+                                        "effective_proximal_contraction", 1.0
+                                    )
+                                    for metrics in local_metrics
+                                ]
+                            )
+                        )
+                        if local_metrics
+                        else 1.0
+                    ),
+                    "std_effective_proximal_contraction": (
+                        float(
+                            np.std(
+                                [
+                                    metrics.get(
+                                        "effective_proximal_contraction", 1.0
+                                    )
+                                    for metrics in local_metrics
+                                ]
+                            )
+                        )
+                        if local_metrics
+                        else 0.0
+                    ),
                     "mean_grad_proxy_distance": (
                         float(np.mean(grad_proxy_distances))
                         if grad_proxy_distances else 0.0
@@ -790,6 +953,7 @@ class Trainer:
                     "train_fcpc_raw_loss": round_train_metrics["fcpc_raw_loss"],
                     "train_fcpc_weighted_loss": round_train_metrics["fcpc_weighted_loss"],
                     "train_total_loss": round_train_metrics["total_loss"],
+                    **update_geometry,
                     "pairing_strategy": pairing_strategy,
                     "pair_count": len(pairing.pairs),
                     "unpaired_count": len(pairing.unpaired),
@@ -990,6 +1154,87 @@ class Trainer:
             )
             result[name] = weighted_sum / denominator
         return result
+
+    @staticmethod
+    def _update_geometry_metrics(
+        *,
+        global_state,
+        aggregate_state,
+        selected_client_ids: list[int],
+        client_states: list,
+        clients: list,
+        pairing: PairingResult,
+        parameter_names: set[str],
+        weighted: bool,
+    ) -> Dict[str, float]:
+        """Measure drift, aggregation cancellation, and pair disagreement.
+
+        These are descriptive causal-ablation diagnostics; they do not alter
+        training.  All distances use trainable parameters only, excluding
+        BatchNorm counters and other non-parameter buffers.
+        """
+        if not client_states:
+            return {
+                "client_update_second_moment": 0.0,
+                "client_update_variance": 0.0,
+                "server_update_norm": 0.0,
+                "update_cancellation_fraction": 0.0,
+                "mean_pair_update_disagreement": 0.0,
+            }
+        counts = np.asarray(
+            [max(float(clients[index].sample_count), 0.0) for index in selected_client_ids],
+            dtype=np.float64,
+        )
+        if weighted and float(counts.sum()) > 0.0:
+            weights = counts / counts.sum()
+        else:
+            weights = np.full(len(client_states), 1.0 / len(client_states))
+
+        update_squared = np.asarray(
+            [
+                state_l2_distance(state, global_state, parameter_names) ** 2
+                for state in client_states
+            ],
+            dtype=np.float64,
+        )
+        residual_squared = np.asarray(
+            [
+                state_l2_distance(state, aggregate_state, parameter_names) ** 2
+                for state in client_states
+            ],
+            dtype=np.float64,
+        )
+        second_moment = float(np.dot(weights, update_squared))
+        variance = float(np.dot(weights, residual_squared))
+        server_norm = state_l2_distance(
+            aggregate_state, global_state, parameter_names
+        )
+        if second_moment <= np.finfo(np.float64).eps:
+            cancellation = 0.0
+        else:
+            cancellation = 1.0 - server_norm**2 / second_moment
+            cancellation = float(min(max(cancellation, 0.0), 1.0))
+
+        state_by_client = dict(zip(selected_client_ids, client_states))
+        pair_disagreements = [
+            state_l2_distance(
+                state_by_client[client_i],
+                state_by_client[client_j],
+                parameter_names,
+            )
+            ** 2
+            for client_i, client_j in pairing.pairs
+            if client_i in state_by_client and client_j in state_by_client
+        ]
+        return {
+            "client_update_second_moment": second_moment,
+            "client_update_variance": variance,
+            "server_update_norm": float(server_norm),
+            "update_cancellation_fraction": cancellation,
+            "mean_pair_update_disagreement": (
+                float(np.mean(pair_disagreements)) if pair_disagreements else 0.0
+            ),
+        }
 
     @staticmethod
     def _learning_rate_for_round(

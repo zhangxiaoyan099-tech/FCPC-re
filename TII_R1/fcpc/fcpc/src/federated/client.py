@@ -35,6 +35,7 @@ class Client:
         max_batches: int | None = None,
         mean_sample_count: float = 1.0,
         fcpc_update_rule: str = "penalty",
+        fcpc_proximal_frequency: str = "batch",
         freeze_batchnorm_stats: bool = False,
         return_metrics: bool = False,
     ):
@@ -68,6 +69,11 @@ class Client:
         fcpc_update_rule = str(fcpc_update_rule).lower()
         if fcpc_update_rule not in {"penalty", "proximal"}:
             raise ValueError("fcpc_update_rule must be 'penalty' or 'proximal'")
+        fcpc_proximal_frequency = str(fcpc_proximal_frequency).lower()
+        if fcpc_proximal_frequency not in {"batch", "local_end_matched"}:
+            raise ValueError(
+                "fcpc_proximal_frequency must be 'batch' or 'local_end_matched'"
+            )
         algorithm.begin_local_train(
             model=model,
             client_id=self.client_id,
@@ -87,6 +93,7 @@ class Client:
         }
         processed_examples = 0
         processed_batches = 0
+        effective_proximal_contraction = 1.0
         non_blocking = str(device).startswith("cuda")
 
         try:
@@ -129,8 +136,9 @@ class Client:
                         fcpc_update_rule == "proximal"
                         and use_fcpc
                         and paired_previous_state is not None
+                        and fcpc_proximal_frequency == "batch"
                     ):
-                        proximal_center_step(
+                        effective_proximal_contraction *= proximal_center_step(
                             dict(model.named_parameters()),
                             paired_previous_state,
                             beta=float(beta),
@@ -152,6 +160,20 @@ class Client:
                     }
                     for name, value in values.items():
                         metric_sums[name] += float(value.detach().item()) * batch_examples
+
+            if (
+                fcpc_update_rule == "proximal"
+                and use_fcpc
+                and paired_previous_state is not None
+                and fcpc_proximal_frequency == "local_end_matched"
+            ):
+                effective_proximal_contraction = proximal_center_step(
+                    dict(model.named_parameters()),
+                    paired_previous_state,
+                    beta=float(beta),
+                    learning_rate=float(lr),
+                    repeat_count=processed_batches,
+                )
 
             self.previous_state = {
                 k: v.detach().cpu().clone() for k, v in model.state_dict().items()
@@ -183,6 +205,7 @@ class Client:
             {
                 "processed_examples": processed_examples,
                 "processed_batches": processed_batches,
+                "effective_proximal_contraction": effective_proximal_contraction,
             }
         )
         return self.previous_state, metrics
