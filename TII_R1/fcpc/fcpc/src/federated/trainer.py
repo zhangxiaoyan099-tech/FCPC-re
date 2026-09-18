@@ -18,6 +18,10 @@ from src.data.partition import (
 )
 from src.data.split import stratified_holdout_indices
 from src.fcpc.jsdn import metric_matrix
+from src.fcpc.diagnostics import (
+    classification_fairness_metrics,
+    pairing_distribution_metrics,
+)
 from src.fcpc.pairing import PairingResult, pair_clients
 from src.fcpc.regularizer import (
     blend_state_centers,
@@ -394,8 +398,22 @@ class Trainer:
                 "update_cancellation_fraction",
                 "mean_pair_update_disagreement",
                 "pairing_strategy",
+                "selected_clients",
                 "pair_count",
                 "unpaired_count",
+                "paired_global_mass",
+                "pair_individual_kl_residual",
+                "pair_mixture_kl_residual",
+                "pair_mixture_kl_residual_normalized",
+                "pair_complementarity_gain",
+                "pair_complementarity_gain_normalized",
+                "pair_kl_identity_error",
+                "mean_pair_label_entropy",
+                "min_pair_label_entropy",
+                "mean_pair_class_coverage",
+                "min_pair_class_coverage",
+                "mean_selected_pairing_score",
+                "total_selected_pairing_score",
                 "pairing_time_s",
                 "round_time_s",
                 "process_cpu_mean_pct",
@@ -560,6 +578,12 @@ class Trainer:
                     unpaired=[int(client_id) for client_id in selected],
                 )
                 pairing_time_s = 0.0
+            pairing_distribution_stats = pairing_distribution_metrics(
+                pairing,
+                [client.label_histogram for client in clients],
+                [client.sample_count for client in clients],
+                pairing_matrix=server.pairing_matrix,
+            )
             reference_states = {}
             center_distances = []
             center_clip_scales = []
@@ -955,8 +979,12 @@ class Trainer:
                     "train_total_loss": round_train_metrics["total_loss"],
                     **update_geometry,
                     "pairing_strategy": pairing_strategy,
+                    "selected_clients": ";".join(
+                        str(client_id) for client_id in selected
+                    ),
                     "pair_count": len(pairing.pairs),
                     "unpaired_count": len(pairing.unpaired),
+                    **pairing_distribution_stats,
                     "pairing_time_s": pairing_time_s,
                     "round_time_s": round_time_s,
                     "process_cpu_mean_pct": resource_stats.process_cpu_mean_pct,
@@ -980,6 +1008,7 @@ class Trainer:
         last_global_state = global_state
         last_test_metrics = final_test_metrics
         selected_test_metrics = last_test_metrics
+        selected_classification_metrics: Dict[str, float] = {}
         if best_global_state is not None:
             model.load_state_dict(best_global_state)
             if evaluate_test:
@@ -989,6 +1018,15 @@ class Trainer:
                     device=device,
                     max_batches=max_eval_batches,
                 )
+                selected_classification_metrics = self.evaluate_classification_fairness(
+                    model,
+                    test_loader,
+                    clients=clients,
+                    num_classes=num_classes,
+                    device=device,
+                    max_batches=max_eval_batches,
+                )
+                selected_test_metrics.update(selected_classification_metrics)
             save_checkpoint(
                 {
                     "model_state": best_global_state,
@@ -1002,6 +1040,17 @@ class Trainer:
                 },
                 best_checkpoint_path,
             )
+        elif evaluate_test:
+            model.load_state_dict(last_global_state)
+            selected_classification_metrics = self.evaluate_classification_fairness(
+                model,
+                test_loader,
+                clients=clients,
+                num_classes=num_classes,
+                device=device,
+                max_batches=max_eval_batches,
+            )
+            selected_test_metrics.update(selected_classification_metrics)
 
         save_checkpoint(
             {
@@ -1028,6 +1077,7 @@ class Trainer:
             "test_acc": selected_test_metrics["test_acc"],
             "last_test_loss": last_test_metrics["test_loss"],
             "last_test_acc": last_test_metrics["test_acc"],
+            **selected_classification_metrics,
             "device": device,
             "gpu_name": gpu_name,
             "train_pool_examples": len(train_indices),
@@ -1129,6 +1179,49 @@ class Trainer:
                 total_samples += int(y.numel())
         total_samples = max(total_samples, 1)
         return {"test_loss": total_loss / total_samples, "test_acc": total_correct / total_samples}
+
+    @staticmethod
+    def evaluate_classification_fairness(
+        model,
+        data_loader,
+        *,
+        clients: list,
+        num_classes: int,
+        device: str,
+        max_batches: int | None = None,
+    ) -> Dict[str, float]:
+        """Evaluate class metrics and label-shift client fairness proxies.
+
+        This performs one final pass over the common test set. It never uses
+        these diagnostics to select a checkpoint or alter training.
+        """
+
+        import torch
+
+        model.to(device)
+        model.eval()
+        non_blocking = str(device).startswith("cuda")
+        confusion = torch.zeros(
+            (int(num_classes), int(num_classes)),
+            dtype=torch.long,
+        )
+        with torch.no_grad():
+            for batch_idx, (inputs, targets) in enumerate(data_loader):
+                if max_batches is not None and batch_idx >= int(max_batches):
+                    break
+                inputs = inputs.to(device, non_blocking=non_blocking)
+                targets = targets.to(device, non_blocking=non_blocking)
+                predictions = model(inputs).argmax(dim=1)
+                flat = targets.long() * int(num_classes) + predictions.long()
+                batch_confusion = torch.bincount(
+                    flat,
+                    minlength=int(num_classes) * int(num_classes),
+                ).reshape(int(num_classes), int(num_classes))
+                confusion += batch_confusion.detach().cpu()
+        return classification_fairness_metrics(
+            confusion.numpy(),
+            [client.label_histogram for client in clients],
+        )
 
     @staticmethod
     def _aggregate_local_metrics(local_metrics: list[Dict[str, Any]]) -> Dict[str, float]:

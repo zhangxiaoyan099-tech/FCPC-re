@@ -28,6 +28,26 @@ COMPONENT_CONTRASTS = (
     ("cosine_beta", "grad_real", "grad_constant_beta"),
     ("batchwise_proximal", "grad_real", "grad_local_end"),
     ("center_clipping", "grad_real", "grad_no_clip"),
+    (
+        "global_proximal_constant_beta",
+        "global_prox_constant_beta",
+        "fedavg",
+    ),
+    (
+        "correct_proxy_sign_constant_beta",
+        "grad_constant_beta",
+        "grad_constant_beta_reversed",
+    ),
+    (
+        "complementary_pairing_constant_beta",
+        "grad_constant_beta",
+        "grad_constant_beta_random_pairing",
+    ),
+    (
+        "batchwise_proximal_constant_beta",
+        "grad_constant_beta",
+        "grad_constant_beta_local_end",
+    ),
 )
 
 # Difference in differences:

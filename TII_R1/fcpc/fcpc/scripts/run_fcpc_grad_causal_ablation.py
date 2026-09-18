@@ -102,6 +102,28 @@ METHOD_OVERRIDES = {
         grad_center_mix=0.0,
         proximal_frequency="local_end_matched",
     ),
+    # Constant-beta confirmation cells. These keep beta fixed at 0.2 so the
+    # learning-rate schedule is the only source of weakening over rounds.
+    "global_prox_constant_beta": _fcpc(
+        reference_strategy="global_center",
+        pairing_strategy="random",
+        beta_schedule="constant",
+    ),
+    "grad_constant_beta_reversed": _fcpc(
+        reference_strategy="pair_grad_center",
+        grad_center_direction="reversed",
+        beta_schedule="constant",
+    ),
+    "grad_constant_beta_random_pairing": _fcpc(
+        reference_strategy="pair_grad_center",
+        pairing_strategy="random",
+        beta_schedule="constant",
+    ),
+    "grad_constant_beta_local_end": _fcpc(
+        reference_strategy="pair_grad_center",
+        proximal_frequency="local_end_matched",
+        beta_schedule="constant",
+    ),
 }
 
 SCREEN_METHODS = (
@@ -126,6 +148,14 @@ INTERACTION_METHODS = (
     "pair_center_local_end",
     "grad_local_end",
 )
+CONSTANT_BETA_METHODS = (
+    "fedavg",
+    "global_prox_constant_beta",
+    "grad_constant_beta",
+    "grad_constant_beta_reversed",
+    "grad_constant_beta_random_pairing",
+    "grad_constant_beta_local_end",
+)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -133,7 +163,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--methods",
         default="screen",
-        help="screen, interactions, all, or comma-separated method names",
+        help=(
+            "screen, interactions, constant_beta, all, or comma-separated "
+            "method names"
+        ),
     )
     parser.add_argument("--seeds", default="45,46,47")
     parser.add_argument("--rounds", type=int, default=50)
@@ -149,6 +182,8 @@ def _resolve_methods(value: str) -> list[str]:
         return list(SCREEN_METHODS)
     if preset in {"interaction", "interactions"}:
         return list(INTERACTION_METHODS)
+    if preset in {"constant", "constant_beta"}:
+        return list(CONSTANT_BETA_METHODS)
     if preset == "all":
         return list(METHOD_OVERRIDES)
     methods = [item.strip().lower() for item in value.split(",") if item.strip()]
