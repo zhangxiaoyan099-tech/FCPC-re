@@ -114,7 +114,15 @@ class Client:
                     }
                     algorithm_loss = algorithm.extra_loss(model, (x, y), task_loss, context)
                     fcpc_raw_loss = task_loss.new_tensor(0.0)
-                    if use_fcpc and paired_previous_state is not None:
+                    # A zero-coefficient FCPC cell is the implementation
+                    # sanity control for FedAvg.  Skip construction of the
+                    # parameter-distance graph entirely so beta=0 cannot
+                    # change CUDA scheduling or the backward graph.
+                    if (
+                        use_fcpc
+                        and paired_previous_state is not None
+                        and float(beta) != 0.0
+                    ):
                         fcpc_raw_loss = fcpc_regularization(
                             dict(model.named_parameters()),
                             paired_previous_state,

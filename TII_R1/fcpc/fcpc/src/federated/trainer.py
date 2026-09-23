@@ -292,13 +292,14 @@ class Trainer:
         ).lower()
         if reference_strategy not in {
             "partner",
+            "self_history",
             "global_center",
             "pair_center",
             "pair_grad_center",
         }:
             raise ValueError(
-                "fcpc.reference_strategy must be 'partner', 'global_center', "
-                "'pair_center', or 'pair_grad_center'"
+                "fcpc.reference_strategy must be 'partner', 'self_history', "
+                "'global_center', 'pair_center', or 'pair_grad_center'"
             )
         fcpc_update_rule = str(fcpc_cfg.get("update_rule", "penalty")).lower()
         if fcpc_update_rule not in {"penalty", "proximal"}:
@@ -707,6 +708,8 @@ class Trainer:
                         "pair_grad_center",
                     }:
                         paired_previous = reference_states.get(client_id)
+                    elif reference_strategy == "self_history":
+                        paired_previous = previous_states.get(client_id)
                     else:
                         paired_previous = previous_states.get(pair_id) if pair_id is not None else None
                     if pair_id is not None and paired_previous is None:

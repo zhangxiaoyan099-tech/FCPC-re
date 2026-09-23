@@ -1,0 +1,67 @@
+seed: 42
+
+dataset:
+  name: cifar10
+  num_classes: 10
+  input_channels: 3
+  root: ./data
+  download: false
+  augment: false
+  normalize: true
+
+model:
+  name: resnet18
+
+federated:
+  num_clients: 10
+  batch_size: 128
+  device: cuda:0
+  num_workers: 2
+  pin_memory: true
+
+partition:
+  mode: dual_skew
+  alpha: 0.1
+  quantity_min_fraction: 0.25
+  preserve_all_samples: true
+
+evaluation:
+  validation_fraction: 0.1
+  validation_seed: 10042
+
+audit:
+  checkpoints: [0, 5, 20, 50]
+  panels: [raw, ldp]
+  epsilon: 1.0
+  ldp_seed: 20042
+  lambda_jsdn: 0.3
+  output_dir: outputs/jsdn_gradient_update_quick
+
+  # The first pass deliberately caps work so we can decide whether D_update
+  # adds information beyond D_grad before paying for a full-data audit.
+  gradient_batch_size: 128
+  gradient_max_batches: 20
+  gradient_num_workers: 2
+  gradient_model_mode: train
+
+  warmup:
+    batch_size: 128
+    local_epochs: 1
+    max_batches_per_client: 20
+    num_workers: 2
+    optimizer:
+      name: sgd
+      lr: 0.05
+      momentum: 0.9
+      weight_decay: 0.0005
+
+  update_probe:
+    batch_size: 128
+    local_epochs: 1
+    max_batches_per_client: 20
+    num_workers: 2
+    optimizer:
+      name: sgd
+      lr: 0.05
+      momentum: 0.9
+      weight_decay: 0.0005

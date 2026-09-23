@@ -38,6 +38,62 @@ class StratifiedSplitTests(unittest.TestCase):
 
 @unittest.skipIf(torch is None, "PyTorch is not installed")
 class ClientMetricTests(unittest.TestCase):
+    def test_zero_beta_fcpc_is_exactly_the_fedavg_update(self) -> None:
+        torch.manual_seed(2)
+        inputs = torch.randn(8, 2)
+        targets = torch.randint(0, 2, (8,))
+        loader = DataLoader(TensorDataset(inputs, targets), batch_size=4, shuffle=False)
+        template = torch.nn.Linear(2, 2)
+        global_state = {
+            name: value.detach().clone()
+            for name, value in template.state_dict().items()
+        }
+        partner_state = {
+            name: value.detach().clone() + 0.1
+            for name, value in template.state_dict().items()
+        }
+
+        baseline, _ = Client(
+            client_id=0,
+            train_loader=loader,
+            sample_count=8,
+            label_histogram=np.ones(2),
+        ).local_train(
+            torch.nn.Linear(2, 2),
+            FedAvgAdapter(),
+            global_state,
+            use_fcpc=False,
+            beta=0.0,
+            lr=0.01,
+            optimizer_name="sgd",
+            local_epochs=1,
+            device="cpu",
+            return_metrics=True,
+        )
+        controlled, metrics = Client(
+            client_id=0,
+            train_loader=loader,
+            sample_count=8,
+            label_histogram=np.ones(2),
+        ).local_train(
+            torch.nn.Linear(2, 2),
+            FedAvgAdapter(),
+            global_state,
+            paired_previous_state=partner_state,
+            use_fcpc=True,
+            beta=0.0,
+            lr=0.01,
+            optimizer_name="sgd",
+            local_epochs=1,
+            device="cpu",
+            return_metrics=True,
+        )
+
+        for name in baseline:
+            self.assertTrue(torch.equal(baseline[name], controlled[name]))
+        self.assertEqual(metrics["fcpc_raw_loss"], 0.0)
+        self.assertEqual(metrics["fcpc_weighted_loss"], 0.0)
+
     def test_local_training_reports_separate_fcpc_losses(self) -> None:
         torch.manual_seed(3)
         inputs = torch.randn(8, 2)
