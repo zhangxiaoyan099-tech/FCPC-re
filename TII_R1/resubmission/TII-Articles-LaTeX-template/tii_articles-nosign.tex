@@ -2,14 +2,12 @@
 \usepackage{generic}
 \usepackage{cite}
 \usepackage{amsmath,amssymb,amsfonts}
-\usepackage{algorithmic}
 \usepackage{graphicx}
 \usepackage{textcomp}
 
 % 复制IoT
 % \usepackage{amsmath,amsfonts}
 \usepackage[linesnumbered,ruled]{algorithm2e}
-\usepackage{algpseudocode}
 \usepackage{array}
 \usepackage[caption=false,font=normalsize,labelfont=sf,textfont=sf]{subfig}
 \usepackage{textcomp}
@@ -22,7 +20,6 @@
 \usepackage{xcolor}
 \usepackage{mathtools}
 \usepackage{bm}
-\usepackage{amsthm}
 
 
 \def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
@@ -56,7 +53,7 @@
 
 
 \begin{abstract}
-The proliferation of dual-skewed non-independent and identically distributed (non-IID) data across Internet of Things (IoT) edge devices—characterized by heterogeneous label distributions and imbalanced sample sizes—severely degrades the robustness of conventional federated learning (FL) frameworks. To address this challenge, we propose FCPC, a dissimilarity-aware plug-and-play FL framework. {First, we design a novel metric, Jensen-Shannon Divergence and Skew Indicator Number (JSDN), to quantify the degree of data heterogeneity in edge FL systems. Leveraging JSDN, we develop a client pairing algorithm to select client pairs with maximized distribution dissimilarities. Concurrently, we embed a lightweight regularization term into local training to align gradient update directions across paired clients and mitigate dimensional collapse. Extensive experiments on benchmark datasets (CIFAR-10/100, TinyImageNet, MNIST, FEMNIST) and real-world IoT scenarios validate two key advantages of FCPC: 1) It outperforms state-of-the-art baselines by 2\%–9.4\% under strong heterogeneity (63.17\% top-1 accuracy on CIFAR-10 with $\alpha=0.05$, 9.4 percentage points higher than FedAvg) with negligible computational overhead; 2) As a plug-and-play module, it seamlessly integrates into existing FL algorithms (e.g., FedAvg, FedProx) without modifying their core architectures, yielding a 3.5\%–9.4\% performance improvement. Overall, this work presents a deployable and compatible solution to enhance FL robustness for practical IoT systems.
+The proliferation of dual-skewed non-independent and identically distributed (non-IID) data across Internet of Things (IoT) edge devices---characterized by heterogeneous label distributions and imbalanced sample sizes---severely degrades conventional federated learning (FL). To address this challenge, we propose FCPC, a dissimilarity-aware FL framework. First, we design the Jensen--Shannon Divergence and Skew Indicator Number (JSDN), a normalized descriptor that combines label and quantity skews. FCPC uses JSDN to select partner references and adds a quadratic paired-model penalty during local training. The penalty provably contains a pullback toward the current global model together with a partner-dependent offset; it does not unconditionally align gradients. Under standard smooth nonconvex assumptions, we establish a finite-round stationarity bound that explicitly retains local drift, reference staleness, client-sampling mismatch, and stochastic variance. Experiments on CIFAR-10/100, TinyImageNet, MNIST, and FEMNIST evaluate predictive performance and the compatibility of FCPC with existing FL algorithms. Controlled ablations separately compare the regularization and pairing effects.
 
 \end{abstract}
 
@@ -84,20 +81,20 @@ A typical example is the traffic and environmental sensing scenario (Fig. \ref{f
 Previous research on federated learning has primarily tackled data heterogeneity from three perspectives, each exhibiting limitations in IoT edge scenarios: 
 Firstly, Algorithmic refinements focus on optimizing local training processes \cite{tii-ClientSelectin,iot2} or redesigning global aggregation mechanisms \cite{tii-Spatio–TemporalAware}. However, many of these approaches impose substantial computational or communication overhead, which is often incompatible with the resource limitations of typical IoT edge hardware.
 Secondly, Architectural innovations explore advanced model structures (e.g., Vision Transformers \cite{fesvibs}) or novel learning paradigms (e.g., SplitFed \cite{splitfed}) to enhance performance. Nevertheless, such methods frequently depend on specific, non-standardized model architectures or require fundamental changes to the federated learning workflow, hindering their seamless adoption in heterogeneous IoT ecosystems. 
-Thirdly, Temporal-spatial explorations investigate patterns like seasonal data fluctuations \cite{tii-Personalized2}, yet they may not adequately address the static, structural heterogeneity inherent in many IoT deployments, such as persistent label and quantity skews across devices. }A critical gap remains: most existing solutions are tailored to mitigate a single type of data skew and lack effective mechanisms to handle the compounded challenges of dual-skewed non-IID data, where both label distribution and sample size vary significantly across clients—a common scenario in real-world IoT systems.
+Thirdly, Temporal-spatial explorations investigate patterns like seasonal data fluctuations \cite{tii-Personalized2}, yet they may not adequately address the static, structural heterogeneity inherent in many IoT deployments, such as persistent label and quantity skews across devices. A critical gap remains: most existing solutions are tailored to mitigate a single type of data skew and lack effective mechanisms to handle the compounded challenges of dual-skewed non-IID data, where both label distribution and sample size vary significantly across clients---a common scenario in real-world IoT systems.
 
 
-\IEEEpubidadjcol
+% \IEEEpubidadjcol is unavailable in the bundled legacy IEEE class.
 % In this work, we address label distribution skew, quantity skew, and their mixtures in IoT edge environments (Fig. \ref{fig:iot}). We discover client constraint rules based on data distribution dissimilarity and design a client pairing algorithm tailored for resource-limited IoT devices, thereby proposing the Federated Client Pairing and Mutual Constraint (FCPC) framework. Compared to previous non-IID solutions, FCPC requires no network architecture modifications and imposes minimal computational burden, which is necessary for deployment on IoT edge nodes with constrained CPU/memory. Significantly, it enhances accuracy and convergence speed while offering orthogonal compatibility, enabling seamless integration with existing IoT-FL methods.
 
-To overcome these limitations, we introduce the Federated Client Pairing and Mutual Constraint (FCPC) framework, motivated by a key observation (detailed in Section 4: Motivation): a potential mutual constraint exists among clients and its strength correlates positively with data distribution dissimilarity. This insight shifts the core challenge to accurately quantifying inter-client data dissimilarity and devising an efficient mechanism to exploit the constraint. FCPC innovates in two aspects. First, it proposes the Jensen-Shannon Divergence and Skew Indicator Number (JSDN) metric, a novel metric that jointly quantifies label and quantity skews. Second, it employs a lightweight JSDN-based client pairing algorithm and injects a pairwise regularization term into local training, actively aligning gradient updates between dissimilar clients. Consequently, FCPC serves as a plug-and-play module that requires no changes to the base FL architecture or aggregation scheme, introduces minimal computational overhead, and maintains orthogonal compatibility—effectively addressing a critical deployment gap in resource-constrained IoT systems.
+To overcome these limitations, we introduce the Federated Client Pairing and Mutual Constraint (FCPC) framework. Its design hypothesis is that distribution-aware partner references can provide useful complementary information under dual skew; this hypothesis is tested against random and similarity-based pairing rather than assumed in the convergence proof. FCPC has two components. First, JSDN jointly describes label and quantity skews in a normalized score. Second, a JSDN-guided greedy rule selects partner references and a quadratic parameter penalty is added to local training. This construction leaves the backbone and server aggregation formula unchanged, although it changes the local objective and adds partner-model communication.
 
 
 
 \textbf{Contributions.} The main contributions of this work are summarized as follows:
 
 \begin{itemize}
-      \item \textbf{Novel Insight into Client Constraints:} A mutual constraint relationship is identified among federated learning clients, with its strength correlating positively with data distribution dissimilarity. A lightweight pairwise regularization mechanism is designed to leverage this relationship, mitigating dimensional collapse in non-IID settings—particularly crucial for IoT edge systems.
+      \item \textbf{Auditable Pairwise Regularization:} We formulate a lightweight paired-model penalty and separate its provable global-model pullback from its partner-dependent offset. A standard smooth nonconvex analysis gives a finite-round stationarity bound without assuming strong convexity or a linear JSDN--gradient relationship.
 
     \item \textbf{Unified Heterogeneity Quantification Metric:} The JSDN metric is proposed to quantify label and quantity skews within a unified formulation. Providing a more holistic characterization of dual-skewed heterogeneity than single-type metrics, JSDN enables more precise client analysis and pairing.
 
@@ -132,7 +129,7 @@ At the quantity level, this manifests as notable disparities in sample sizes acr
 \subsection{Existing Solutions}
  % FedAvg\cite{fedavg} , as a pioneering work in the field of federated learning,  aggregates model parameters by weighted averaging. Different from traditional distributed training, FedAvg supports clients to train locally and then upload their local model parameters to the server, which calculates the average of these parameters and weights them according to the amount of data on each device.This approach provides a new way of thinking about distributed learning, but it is a little bit unsatisfactory. For this reason, research on solving the federated learning non-IID problem has gradually emerged in recent years.
 
-To contextualize our approach, we review prevalent strategies for handling non-IID data and analyze their suitability for dual-skewed IoT scenarios.}
+To contextualize our approach, we review prevalent strategies for handling non-IID data and analyze their suitability for dual-skewed IoT scenarios.
 
 FedProx\cite{fedprox} is an approach designed to address system heterogeneity and data heterogeneity. It enables flexible local computation, which to some extent mitigates the interference caused by resource-constrained federated participants during the training process. At the same time, it merges a proximal term in the loss function to avoid excessive deviation of client training from the global model.
 
@@ -150,7 +147,7 @@ FedDyn\cite{feddyn} introduces a new approach to construct agent datasets and dy
 
 % \textbf{Summary and Differentiation. }As reviewed, prevailing methods address non-IID challenges through global-model-centric regularization (e.g., FedProx), representation-level alignment (e.g., MOON), or complex knowledge distillation (e.g., FedDyn). While beneficial in certain contexts, these approaches often introduce non-negligible computational overhead or require modifications to the FL protocol, limiting their practicality in standardized, resource-constrained IoT deployments. Crucially, they are primarily designed for single-type skews and lack a direct mechanism to leverage inter-client data dissimilarity. In contrast, our proposed FCPC framework fundamentally diverges by: (1) introducing a pairwise, dissimilarity-aware constraint that actively utilizes data distribution gaps as a convergence driver, (2) operating via a lightweight, plug-and-play regularization term that avoids architectural changes and minimizes overhead, and (3) explicitly targeting the dual-skewed heterogeneity prevalent in IoT edge data through the unified JSDN metric. This positions FCPC as a uniquely practical solution tailored for the dual constraints of statistical heterogeneity and device resource limitations in real-world IoT systems.
 
-\textbf{Summary and Differentiation. }As reviewed, the prevailing methods tackle non-IID challenges through diverse strategies: global-model-centric regularization (e.g., FedProx), representation-level contrastive learning (e.g., MOON), dynamic knowledge distillation (e.g., FedDyn), trust evaluation for federated learning in mobile network digital twins (e.g., TFL-DT\cite{tfl-dt}), local graph-based aggregation for dual skews (e.g., FBLG\cite{fblg}), causal inference to address aggregation bias (e.g., FedCFA\cite{fedcfa}) and reinforcement learning-based personalized scheduling (e.g., FastPPO). While effective in their specific designs, many incur non-negligible computational overhead (e.g., contrastive pairs in MOON, graph construction in FBLG) or require modifications to the core FL aggregation protocol (e.g., VerifyDFL \cite{majianfeng}, FedDyn, FedCFA), which can hinder their adoption in lightweight, standardized IoT frameworks. Furthermore, except for FBLG which explicitly targets dual skews, most are primarily designed for or evaluated on single-type heterogeneity and lack an intrinsic mechanism to actively leverage inter-client data dissimilarity. In contrast, our proposed FCPC framework is distinguished by its core philosophy of transforming dissimilarity into a convergent force. Specifically, FCPC differs fundamentally by: (1) introducing a lightweight, pairwise constraint that directly utilizes quantified data distribution gaps  to align client updates, (2) operating as a plug-and-play module that requires no alteration to the global aggregation scheme and adds minimal computational burden, and (3) employing a unified metric (JSDN) to explicitly target and exploit dual-skewed heterogeneity. This design makes FCPC a uniquely practical and efficient solution tailored for resource-constrained IoT systems where statistical heterogeneity and device limitations coexist.
+\textbf{Summary and Differentiation. }The prevailing methods tackle non-IID data through global-model regularization (e.g., FedProx), representation-level contrastive learning (e.g., MOON), dynamic knowledge distillation (e.g., FedDyn), trust evaluation for mobile-network digital twins (e.g., TFL-DT\cite{tfl-dt}), graph-based aggregation for dual skews (e.g., FBLG\cite{fblg}), causal correction of aggregation bias (e.g., FedCFA\cite{fedcfa}), or personalized scheduling (e.g., FastPPO). FCPC instead retains the base server aggregator and changes the local objective by using a frozen partner model as the reference of a quadratic penalty. JSDN supplies a joint label--quantity score for choosing that reference. The revised analysis does not claim that greater metadata dissimilarity is automatically a stronger convergence force; the value of the pairing rule is isolated experimentally, while the nonconvex theorem accounts explicitly for the realized reference error.
 
 
 % In the context of federated learning within IoT systems, the non-IID problem has a significant negative impact on its performance. IoT devices often generate data with varying characteristics due to differences in deployment environments, sensing capabilities, and usage patterns, leading to diverse data distributions. When the data of each IoT device is characterized by a diverse distribution, the updating direction of the model parameters will diverge during the local model training process of each device. This inconsistency in data distribution directly leads to the different directions of local model updating. The increase of this bias seriously hinders the efficient integration of the knowledge extracted from each local model into the global model, which in turn leads to a decrease in the overall performance of federated learning in IoT scenarios.
@@ -262,14 +259,14 @@ Based on the above study, we consider whether heterogeneous clients can restrict
     \label{fig:demension}
 \end{figure}
 
-\noindent \textbf{Implication 3.} \textit{There appears to be a potential constraint effect that can mitigate the dimensional collapse of local models, and this constraint effect is more pronounced among clients with large differences in data distribution. So we need to quantify these differences precisely.}
+\noindent \textbf{Implication 3.} \textit{These observations motivate testing whether distribution-aware partner references improve finite-round learning. They do not establish that the benefit increases monotonically with data-distribution dissimilarity; that question requires controlled pairing ablations.}
 
 
-\subsection{Promoting Alignment of Model Update Directions Among Participants}
+\subsection{Pairwise Reference Regularization}
 
 To counteract the effects of non-IID data, FedDecorr\cite{pami} adds a regularization term to the loss function of each local model to encourage tail singularities not to collapse to 0, thus effectively mitigating dimensional collapse.
 
-\noindent \textbf{Implication 4.}  \textit{Inspired by FedDecorr, we propose to optimize the training process by integrating a pairwise-based regularization term. The term acts as a mutual restriction on participants with different data distributions, inducing them to try to maintain the same gradient update direction.}
+\noindent \textbf{Implication 4.} \textit{We therefore test a quadratic pairwise-reference penalty during local training. Its gradient contains a pullback toward the current global model and a partner-dependent offset; it does not by itself guarantee aligned gradient directions.}
 
 
 
@@ -447,7 +444,7 @@ $P_{\text{pairs}} \gets \emptyset$ \\
 \end{algorithm}
 
 
-When $n$ is odd, we can only form $(n - 1)/2$ pairs of clients, and there will be one client left at the end. In this case, the minimum value in the JSDN matrix represents that the data distribution difference between this client and other clients is relatively small. From the perspective of data distribution, this client is roughly in the middle position of the client distribution. That is to say, its label distribution and data volume are representative to a certain extent within the overall client cohort, and its discrepancies from other clients are less pronounced than those between certain other client pairs. Therefore, we choose to abandon the client corresponding to the minimum value in the JSDN matrix to avoid the interference of the parity of the number of federated learning participants on the pairing process, thus simplifying the pairing process and improving the adaptability of the pairing algorithm.
+When $n$ is odd, the greedy rule forms $(n-1)/2$ pairs and leaves one client unmatched. The unmatched client is not discarded: it performs the ordinary local task update and participates in server aggregation, but its paired penalty is set to zero in that round. A fair-bye counter rotates the unmatched status among repeatedly participating clients. We make no claim that the remaining client is globally representative, because a small entry in a pairwise matrix does not establish client centrality.
 
 
 \subsection{FCPC}
@@ -476,9 +473,9 @@ After each round of local training, the clients will send the local training wei
 \min_{w} \ell(w, X, \mathbf{y}) + \beta L_{\text{FCPC}}(w, X),
 \label{equa:beta}
 \end{equation}
-where \(\ell\) is the cross entropy loss, and $\beta$ is the regularization coefficient of FCPC. Essentially, $L_{\text{FCPC}}$ penalizes the difference between the paired clients, thus preventing the two from going in opposite directions of gradient updating during training. Instead, it constrains the paired clients so that they try to maintain the same direction of gradient updating, speeding up model convergence. This regularization term solves the statistical heterogeneity problem by restricting the local updates of the heterogeneous clients without requiring manually set the number of local epochs. We summarize the steps of FCPC in Algorithm \ref{alg:FCPC}.
+where \(\ell\) is the cross-entropy loss and $\beta$ is the FCPC coefficient. Its gradient is $2\beta(w_k^t-w_{k'}^{t-1})$. Relative to the current global model, this direction decomposes into a pullback that limits local drift and an offset induced by the historical partner reference. The offset can be favorable or unfavorable depending on its inner product with the global gradient; JSDN alone does not determine that sign. Thus the penalty directly controls parameter discrepancy, not gradient-angle alignment. We summarize the steps of FCPC in Algorithm \ref{alg:FCPC}.
 
-In addition, detailed convergence analysis of FCPC is provided in the Appendix.
+The Appendix derives the exact local decomposition, a conditional single-round descent inequality, and a finite-round stationarity bound under standard smooth nonconvex assumptions. With fixed nonvanishing reference bias, the result guarantees convergence only to a stationary neighborhood; exact stationarity requires the weighted direction bias to vanish.
 %s算法
 
 
@@ -726,7 +723,7 @@ The results presented in Tables \ref{tab:add FCPC} and \ref{tab:tinyimagenet} co
 \label{tab:tinyimagenet}
 % 用}包裹整个tabular，标记整表为新增
 
-\begin{tabular}{lD{.}{.}{2.2}D{.}{.}{2.2}D{.}{.}{2.2}}
+\begin{tabular}{lccc}
 \toprule
 Method & \multicolumn{3}{c}{TinyImageNet} \\ % 补回丢失的这一行核心表头
 \cmidrule(lr){2-4}  % 表头下方短横线，左右留白更美观
@@ -784,13 +781,13 @@ To deeply explore the impact of the key hyperparameters in the FCPC algorithm an
 
 % \paragraph{Coefficient\(\lambda\)}
 \textbf{ Coefficient \(\lambda\).} Considering the characteristic of the FedAvg algorithm itself, which performs weighted averaging based on the amount of data, the label skew may play a dominant role. Based on this, we search for the relatively most appropriate value of \(\lambda\) in the set \(\{0.1, 0.2, 0.3, 0.4\}\) to measure the distribution difference between clients. 
-As \(\lambda\) gradually increases, the model's adaptability to the data amount difference is enhanced. However, when \(\lambda\) is too large, it may overemphasize the data amount deviation and relatively weaken the impact of the label deviation, causing the model performance to be affected again. After a series of experimental comparisons, it is found that when \(\lambda = 0.3\), the JSDN indicator can more effectively measure the distribution difference of client data, enabling the FCPC algorithm to achieve good performance in various experimental scenarios. Meanwhile, we also conducted a rigorous theoretical derivation of \(\lambda\) values in the Appendix. As shown in Fig. \ref{fig:enter-label}, it is recommended to set \(\lambda\) to 0.3 to fully utilize the advantages of the FCPC algorithm in handling dual-skewed non-IID data.
+As \(\lambda\) increases, the quantity-skew component receives more weight and the label-skew component receives less. No dataset-independent optimum follows from the JSDN definition or the convergence theorem. We therefore select $\lambda=0.3$ empirically from the tested set $\{0.1,0.2,0.3,0.4\}$; Fig. \ref{fig:enter-label} reports the corresponding sensitivity rather than a theoretical derivation of this value.
 
 
 
 % \paragraph{Coefficient $\beta$}
 \textbf{Coefficient $\beta$. }We systematically evaluated the impact of the hyperparameter $\beta$ on FCPC's performance across various data-heterogeneity scenarios (controlled by $\alpha \in \{0.05, 0.1\}$). Experiments were conducted with $\beta \in \{0.05, 0.1, 0.2, 0.3\}$ while keeping all other conditions (network architecture, dataset, training epochs, optimizer settings, and data augmentation) identical.
-The results show that FCPC's performance improves with increasing $\beta$, stabilizes, and then slightly declines. Moderate $\beta$ values strengthen regularization, enhancing inter-client gradient consistency and improving performance. Conversely, excessive $\beta$ introduces overly strong constraints that hinder learning, leading to suboptimal performance.
+The results show that FCPC's performance improves with increasing $\beta$, stabilizes, and then slightly declines. Moderate values strengthen the parameter pullback and can limit local drift, whereas excessive values can overconstrain task learning.
 Across all experimental configurations, $\beta = 0.2$ consistently yielded near-optimal results (see Fig. \ref{fig:beta}), representing an ideal balance between constraint strength and learning capacity. This value serves as a robust default when prior information is unavailable.
 
 
@@ -832,7 +829,7 @@ In intelligent transportation systems, the collaborative optimization of traffic
     \label{fig:placeholder}
 \end{figure}
 
-To address this, the FCPC algorithm can be integrated into the intelligent transportation IoT system (see Fig. \ref{fig:IoT}): each RSU, OBU, and traffic light controller acts as a client in federated learning, and first uploads the label distribution  and data size of local traffic data to the cloud server after LDP processing; the server calculates the JSDN matrix based on the uploaded information, and pairs clients with significant differences in data distribution  through the client pairing algorithm; during local training, the paired clients constrain each other through the FCPC regularization term, which reduces the divergence of gradient update directions caused by non-IID data, enables the local models to learn the characteristics of heterogeneous traffic data more comprehensively, and then aggregates the local model parameters to form a global model. This global model can be used to predict short-term traffic flow in each road segment and optimize traffic signal timing dynamically, thereby reducing traffic congestion and improving travel efficiency.
+FCPC could be integrated into an intelligent-transportation FL system (Fig. \ref{fig:IoT}) by treating each RSU, OBU, or traffic-light controller as a client. A client releases perturbed label-count metadata, the server computes JSDN and assigns partner references, and the paired penalty is applied during local training before ordinary server aggregation. The penalty limits paired-model discrepancy, but the present image-based experiments do not by themselves establish improved traffic-flow prediction or real-time signal control; these remain deployment targets requiring sensor/time-series validation.
 
 \begin{figure}[h]
     \centering
@@ -856,7 +853,7 @@ In practical applications, the plug-and-play nature of FCPC allows new IoT devic
 
 
 \section{Conclusion}
-This paper addresses the critical challenge of performance degradation in federated learning (FL) caused by dual-skewed (label and quantity) non-IID data in Internet of Things (IoT) systems. A key insight driving this work is that the mutual constraint potential between clients is positively correlated with their data distribution dissimilarity. Building on this insight, a novel, dissimilarity-aware framework named FCPC is proposed, which comprises two synergistic components: (1) the Jensen-Shannon Divergence and Skew Indicator Number (JSDN) index for precise client heterogeneity quantification, and (2) a client pairing and mutual-constraint mechanism that employs a lightweight regularization term during local training to align gradient updates and mitigate dimensional collapse.
+This paper studies dual-skewed (label and quantity) non-IID data in federated learning for IoT settings. FCPC combines (1) JSDN, a normalized label--quantity metadata descriptor, and (2) a greedy partner-selection rule with a quadratic paired-model penalty. The revised theory proves the penalty's pullback decomposition and gives a standard smooth nonconvex finite-round stationarity bound. It deliberately treats the learning benefit of high-JSDN pairing as an empirical question rather than assuming a universal JSDN--gradient relationship.
 
 Extensive experiments on multiple datasets (CIFAR-10/100, TinyImageNet, MNIST, FEMNIST) and network architectures (ResNet-18, MobileNetV2) confirm FCPC's efficacy. It consistently outperforms strong baselines (FedAvg, FedProx, MOON), achieving top-1 accuracy on CIFAR-10 under severe dual-skew conditions. Crucially, FCPC's plug-and-play design enables seamless integration into existing FL frameworks without introducing prohibitive computational burden, offering a practical system integration strategy for resource-constrained IoT environments.
 
