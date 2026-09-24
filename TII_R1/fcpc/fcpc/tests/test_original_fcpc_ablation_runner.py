@@ -39,6 +39,7 @@ class OriginalFCPCAblationRunnerTests(unittest.TestCase):
         }
         reference = configs["fedavg"]
         for method, config in configs.items():
+            self.assertTrue(config["reproducibility"]["deterministic"], method)
             self.assertEqual(config["federated"], reference["federated"], method)
             self.assertEqual(config["optimizer"], reference["optimizer"], method)
             self.assertEqual(config["scheduler"], reference["scheduler"], method)

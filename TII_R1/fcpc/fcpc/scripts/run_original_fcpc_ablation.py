@@ -159,6 +159,9 @@ def build_config(base: dict, method: str, *, seed: int, rounds: int, beta: float
     config = copy.deepcopy(base)
     _deep_update(config, method_override(method, beta))
     config["seed"] = int(seed)
+    # Multi-seed treatment comparisons require the same initialization,
+    # augmentation streams, and CUDA kernels within every seed.
+    config["reproducibility"] = {"deterministic": True}
     config["evaluation"]["validation_seed"] = int(seed) + 10_000
     config["federated"]["rounds"] = int(rounds)
     config["logging"]["output_dir"] = "outputs/original_fcpc_ablation/logs"

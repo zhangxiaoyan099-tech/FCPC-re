@@ -120,7 +120,13 @@ class Trainer:
             raise ImportError("PyTorch is required for full training. Use --dry-run without PyTorch.") from exc
 
         seed = int(self.config.get("seed", 42))
-        set_seed(seed)
+        reproducibility_cfg = self.config.get("reproducibility", {})
+        deterministic = bool(reproducibility_cfg.get("deterministic", False))
+        set_seed(seed, deterministic=deterministic)
+        print(
+            f"reproducibility: seed={seed}; deterministic={deterministic}",
+            flush=True,
+        )
 
         dataset_cfg = self.config.get("dataset", {})
         model_cfg = self.config.get("model", {})
@@ -234,6 +240,8 @@ class Trainer:
         clients: list[Client] = []
         for client_id in range(num_clients):
             subset = Subset(train_dataset, client_indices[client_id])
+            loader_generator = torch.Generator()
+            loader_generator.manual_seed(seed * 1000 + client_id)
             loader = DataLoader(
                 subset,
                 batch_size=batch_size,
@@ -241,6 +249,7 @@ class Trainer:
                 num_workers=num_workers,
                 pin_memory=pin_memory,
                 persistent_workers=persistent_workers,
+                generator=loader_generator,
             )
             clients.append(
                 Client(
