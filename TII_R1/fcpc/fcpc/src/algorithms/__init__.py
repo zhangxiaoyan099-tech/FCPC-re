@@ -1,4 +1,5 @@
 from .base import AlgorithmAdapter
+from .dynamic_fedavg import DynamicFedAvgAdapter
 from .fedcfa import FedCFAAdapter
 from .feddyn import FedDynAdapter
 from .fedavg import FedAvgAdapter
@@ -11,6 +12,8 @@ def build_algorithm(name: str, **kwargs) -> AlgorithmAdapter:
     name = name.lower()
     if name == "fedavg":
         return FedAvgAdapter(**kwargs)
+    if name == "dynamic_fedavg":
+        return DynamicFedAvgAdapter(**kwargs)
     if name == "fedprox":
         return FedProxAdapter(**kwargs)
     if name == "moon":
