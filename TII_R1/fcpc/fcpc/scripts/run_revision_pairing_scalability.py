@@ -53,12 +53,12 @@ def timed_with_peak(function, *args):
     return result, elapsed, peak / (1024 * 1024)
 
 
-def partner_map(pairs) -> dict[int, int]:
-    mapping: dict[int, int] = {}
-    for left, right in pairs:
-        mapping[int(left)] = int(right)
-        mapping[int(right)] = int(left)
-    return mapping
+def partner_map(pairing_result) -> dict[int, int]:
+    """Return a plain integer partner map from a PairingResult."""
+    return {
+        int(client_id): int(partner_id)
+        for client_id, partner_id in pairing_result.pair_map.items()
+    }
 
 
 def benchmark_once(
@@ -102,8 +102,8 @@ def benchmark_once(
         "greedy_peak_mib": greedy_peak_mib,
         "total_pairing_seconds": matrix_seconds + greedy_seconds,
         "combined_python_peak_upper_mib": matrix_peak_mib + greedy_peak_mib,
-        "greedy_pair_count": len(greedy),
-        "greedy_coverage": 2.0 * len(greedy) / num_clients,
+        "greedy_pair_count": len(greedy.pairs),
+        "greedy_coverage": 2.0 * len(greedy.pairs) / num_clients,
         "greedy_weight": greedy_weight,
         "optimal_seconds": optimal_seconds,
         "optimal_weight": optimal_weight,
@@ -133,9 +133,9 @@ def benchmark_once(
         "num_classes": num_classes,
         "seed": seed,
         "join_recompute_seconds": join_recompute_seconds,
-        "initial_pair_count": len(initial_pairs),
-        "joined_pair_count": len(joined_pairs),
-        "joined_coverage": 2.0 * len(joined_pairs) / num_clients,
+        "initial_pair_count": len(initial_pairs.pairs),
+        "joined_pair_count": len(joined_pairs.pairs),
+        "joined_coverage": 2.0 * len(joined_pairs.pairs) / num_clients,
         "incumbent_clients_with_partner_before_join": len(incumbent_paired),
         "incumbent_partner_changes": changed,
         "incumbent_partner_churn": (
